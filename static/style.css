@@ -1,0 +1,86 @@
+body {
+  background-color: #f9f9fb;
+  font-family: system-ui, sans-serif;
+  color: #333;
+}
+
+h1, h3, h4 {
+  font-weight: 600;
+  color: #222;
+}
+
+section {
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid #dee2e6;
+  margin-bottom: 2rem;
+}
+
+.flash-container .flash-message {
+  margin-bottom: 0.5rem;
+}
+
+.available-tags .btn {
+  font-size: 0.85rem;
+  padding: 0.3rem 0.7rem;
+}
+
+.rename-form select,
+.rename-form input {
+  min-width: 180px;
+}
+
+.upload-form input {
+  font-size: 0.95rem;
+}
+
+.backups-list {
+  max-width: 700px;
+  margin-bottom: 1rem;
+}
+
+.photo-card img {
+  max-width: 100%;
+  height: auto;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto;
+}
+
+.photo-card {
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.08);
+  border-radius: 0.5rem;
+  transition: transform 0.2s ease;
+}
+
+.photo-card:hover {
+  transform: scale(1.01);
+}
+
+.photo-card .card-body {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+
+.remove-photo-form button {
+  font-size: 0.8rem;
+}
+
+.tags-list .tag-btn {
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+}
+
+.add-tag-form input {
+  min-width: 0;
+  flex-grow: 1;
+}
+
+.pagination .page-link {
+  color: #333;
+}
+
+.pagination .page-item.active .page-link {
+  background-color: #007bff;
+  border-color: #007bff;
+  color: #fff;
+}
