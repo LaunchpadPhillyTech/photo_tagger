@@ -22,7 +22,7 @@ app.secret_key = os.urandom(24)
 # User Access Control
 ALLOWED_USERS = {
     "alope0091@launchpadphilly.org",
-    "rob@launchpadphilly.org",
+    "placeholder@launchpadphilly.org",
     "melanie@b-21.org"
 }
 
@@ -384,7 +384,7 @@ def index():
     per_page = ITEMS_PER_PAGE
     data = load_data(page=page, per_page=per_page)
 
-    # Get all unique tags for filtering
+    # Unique tags
     all_tags_set = set()
     for item in data:
         all_tags_set.update(item["tags"])
