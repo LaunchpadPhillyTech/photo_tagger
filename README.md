@@ -1,93 +1,166 @@
-# Python Flask ReplAuth
+# Photo Tagger
 
-Using the ReplAuth with Flask is super easy! First we create a new Flask app: 
+A Flask-based web application for tagging and organizing Google Drive photos with local SQLite storage and backup functionality.
 
-<details>
-  <summary>Import Flask and create new Flask app</summary>
+## Features
 
-```python
-from flask import Flask, render_template, request
-app = Flask('app')
-@app.route('/')
+- **Google Drive Integration**: OAuth2 authentication with read-only access to your Drive files
+- **Photo Tagging**: Add, remove, and rename tags for your photos
+- **Folder Support**: Process entire Google Drive folders recursively
+- **Search Functionality**: Search photos by tags or file IDs
+- **Backup System**: Create and restore complete database backups
+- **Thumbnail Support**: Automatic thumbnail fetching from Google Drive
+- **Responsive UI**: Bootstrap-based interface with pagination
+
+## Setup Instructions
+
+### Prerequisites
+
+- Python 3.10 or higher
+- Google Cloud Console project with Drive API enabled
+- Google OAuth2 credentials
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd photo_tagger
+   ```
+
+2. **Create and activate a virtual environment**
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+
+3. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. **Set up Google OAuth2 credentials**
+   - Go to the [Google Cloud Console](https://console.cloud.google.com/)
+   - Create a new project or select an existing one
+   - Enable the Google Drive API
+   - Create OAuth2 credentials (Web application type)
+   - Add `http://localhost:3000/callback/oauth2callback` to Authorized redirect URIs
+
+5. **Configure environment variables**
+   - Copy `.env.example` to `.env`: `cp .env.example .env`
+   - Update the values in `.env` with your Google OAuth credentials
+   - Update `ALLOWED_USERS` in `main.py` (lines 33-38) with authorized email addresses
+
+6. **Run the application**
+   ```bash
+   python main.py
+   ```
+
+7. **Access the application**
+   - Open your browser and go to `http://localhost:3000`
+   - You'll be redirected to Google OAuth for authentication
+   - Grant the necessary permissions for Drive access
+
+## Usage
+
+### Adding Photos
+- Paste Google Drive file or folder URLs in the upload form
+- Add comma-separated tags
+- The app will process folders recursively and extract all image files
+
+### Managing Tags
+- Click on any tag to remove it from a photo
+- Use the "Add Tag" form on each photo to add new tags
+- Use the "Rename Tag" section to bulk rename tags across all photos
+
+### Search and Filter
+- Use the search bar to find photos by tags or file IDs
+- Click on available tags to filter photos
+- Combine multiple search terms with commas
+
+### Backup Management
+- Create backups with custom names or automatic timestamps
+- Load previous backups to restore your data
+- Delete old backups to save space
+
+## Development
+
+### Project Structure
 ```
-</details>
-
-And then we request the headers: 
-
-<details>
-  <summary>Requested Headers:</summary>
-
-```python
-def hello_world():
-    print(request.headers)
-    return render_template(
-        'index.html',
-        user_id=request.headers['X-Replit-User-Id'],
-        user_name=request.headers['X-Replit-User-Name'],
-        user_roles=request.headers['X-Replit-User-Roles'],
-        user_bio=request.headers['X-Replit-User-Bio'],
-        user_profile_image=request.headers['X-Replit-User-Profile-Image'],
-        user_teams=request.headers['X-Replit-User-Teams'],
-        user_url=request.headers['X-Replit-User-Url']
-    )
-```
-</details>
-
-In this code we've requested all the possible headers, which are these:
-
-<details>
-  <summary>All Replit Headers</summary>
-
-```python
-X-Replit-User-Bio
-X-Replit-User-Id
-X-Replit-User-Name
-X-Replit-User-Profile-Image
-X-Replit-User-Roles
-X-Replit-User-Teams
-X-Replit-User-Url
-```
-</details>
-
-Once we've requested all these headers, we can show the information we've got after the user has passed through the Auth. This info will be displayed on the console, but can also be displayed in a html file.
-
-We can show this by displaying the variable assigned to a header in a HTML tag (it can also be shown without a tag). If we wanted to show the username of the user we would put this:
-
-```html
-<h1>{{ user_name }}</h1>
+photo_tagger/
+├── main.py              # Main Flask application
+├── .env                 # Environment variables (not in git)
+├── .env.example         # Environment variables template
+├── data/
+│   └── data.db         # SQLite database
+├── static/
+│   └── style.css       # Custom styles
+├── templates/
+│   └── index.html      # Main template
+├── venv/               # Virtual environment (if using pip)
+├── requirements.txt    # Python dependencies
+└── pyproject.toml      # Poetry configuration
 ```
 
-And the output will be a heading (h1) with the username. 
+### Database Schema
+- **images**: Stores file IDs, tags (JSON), and thumbnail URLs
+- **backups**: Stores complete database snapshots with timestamps
 
-# ReplAuth FAQ 
+### Configuration
+All configuration constants are defined at the top of `main.py` for easy modification.
 
-The question is in a quote and in italic and the answer is in a bullet point.
+## Security Notes
 
-<details>
-  <summary>ReplAuth FAQ</summary>
-  
-  > *How many ReplAuths are there?*
-  
-  - There are 2 repl auths!
- ---
-  > *Which ReplAuths are there?*
-  
-  - Node.js and Python Flask
----
-  > *Is there a Replit Documentation on ReplAuths?*
+- The application uses read-only Google Drive access
+- User access is controlled via email whitelist
+- Sessions use secure random keys
+- All database operations use parameterized queries
 
-  - Yes! You can find it in the [Replit Docs](https://docs.replit.com)
-</details>
+## Troubleshooting
 
-# Template
+### Common Issues
 
-**Name**: Python Flask ReplAuth
+- **500 Internal Server Error**: Usually caused by OAuth configuration issues
+  - Check that your `.env` file exists and contains all required variables
+  - Ensure the redirect URI matches exactly in your Google Cloud Console OAuth2 credentials
+  - Verify your Google OAuth credentials are correct
 
-**Description**: Python Flask ReplAuth is easy and useful to use! What are you waiting for? Start using ReplAuth today!
+- **OAuth errors**: Ensure redirect URI matches exactly in Google Cloud Console
+  - Go to Google Cloud Console → APIs & Services → Credentials
+  - Edit your OAuth 2.0 Client ID
+  - Add `http://localhost:3000/callback/oauth2callback` to Authorized redirect URIs
 
-# Questions?
+- **Permission denied (403)**: Check that your email is in the `ALLOWED_USERS` list
+  - Edit `main.py` lines 33-38 to include your Google account email
 
-If you have any question please look at our support resources:
+- **Port already in use**: Another process is using port 3000
+  ```bash
+  # Kill existing processes on port 3000
+  lsof -ti:3000 | xargs kill -9
+  ```
 
-- [Replit Docs](https://docs.replit.com)
-- [Ask forum](https://ask.replit.com)
+- **Missing thumbnails**: Some Google Drive files may not have thumbnail support
+  - This is normal for certain file types or very large images
+
+- **Database issues**: Delete `data/data.db` to reset (you'll lose all data)
+  ```bash
+  rm data/data.db
+  python main.py  # Will recreate the database
+  ```
+
+### Recent Updates
+
+**Configuration Updates:**
+- Migrated from `credentials.json` file to environment variable-based OAuth configuration
+- Updated default port from 8080 to 3000 to match common development practices
+- Enhanced configuration with centralized constants and better error handling
+
+**Environment Setup:**
+- Added `.env.example` template file for easy configuration
+- Support for both Poetry and pip installation methods
+- Improved virtual environment setup instructions for better dependency isolation
+
+**Code Quality:**
+- Added Ruff linting and Pyright type checking support
+- Enhanced error handling and user feedback
+- Improved code organization with clear constant definitions

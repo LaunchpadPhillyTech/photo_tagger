@@ -1,11 +1,14 @@
 ### - Libraries - ###
+import dotenv
 from flask import Flask, render_template, request, redirect, session, abort, flash
 import os
 import re
+from dotenv import load_dotenv
 import sqlite3
 import json
 import datetime
 
+load_dotenv()  # Load environment variables from .env file
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -15,7 +18,14 @@ from googleapiclient.discovery import build
 
 ### - Flask App Setup - ###
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
+app.secret_key = os.getenv("FLASK_SECRET_KEY")
+if not app.secret_key:
+    raise ValueError("No FLASK_SECRET_KEY set for Flask application. Please set it in your .env file.")
+
+# Add these session configurations
+app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HTTPS
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 
 ### - Configuration Constants - ###
@@ -23,7 +33,8 @@ app.secret_key = os.urandom(24)
 ALLOWED_USERS = {
     "alope0091@launchpadphilly.org",
     "placeholder@launchpadphilly.org",
-    "melanie@b-21.org"
+    "melanie@b-21.org", 
+    "rob@launchpadphilly.org"
 }
 
 # Database Configuration
@@ -34,18 +45,40 @@ DEFAULT_PAGE = 1
 ITEMS_PER_PAGE = 40
 
 # Google OAuth Configuration
-OAUTH_REDIRECT_URI = "https://6be0ea6f-d348-44dd-942f-ec161e8d1061-00-2rqrh2hfqtnar.picard.replit.dev/oauth2callback"
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+GOOGLE_PROJECT_ID = os.getenv("GOOGLE_PROJECT_ID")
+OAUTH_REDIRECT_URI = os.getenv("OAUTH_REDIRECT_URI", "http://localhost:3000/callback/oauth2callback")
+
+if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_PROJECT_ID]):
+    raise ValueError("Missing one or more GOOGLE_... OAuth environment variables. Please check your .env file.")
+
+# This dictionary is used to configure the OAuth flow.
+# It's constructed from environment variables instead of a JSON file.
+client_config = {
+    "web": {
+        "client_id": GOOGLE_CLIENT_ID,
+        "project_id": GOOGLE_PROJECT_ID,
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+        "client_secret": GOOGLE_CLIENT_SECRET,
+        "redirect_uris": [OAUTH_REDIRECT_URI],
+    }
+}
+
 OAUTH_SCOPES = [
     "https://www.googleapis.com/auth/drive.readonly",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
     "openid"
 ]
-CREDENTIALS_FILE = "credentials.json"
 
 # Server Configuration
 SERVER_HOST = "0.0.0.0"
-SERVER_PORT = 8080
+SERVER_PORT = int(os.getenv("PORT", 3000))
+
+print(f"[Server Configuration] Running on {SERVER_HOST}:{SERVER_PORT}") 
 
 # API Settings
 GOOGLE_DRIVE_API_VERSION = "v3"
@@ -308,9 +341,10 @@ def list_images_in_folder(folder_id, creds):
 ### - Google Authentication - ###
 @app.route("/authorize")
 def authorize():
-    # Initializes an OAuth flow from the "credentials.json" file using only read-only Drive access.
-    flow = Flow.from_client_secrets_file(
-        CREDENTIALS_FILE,
+
+    # Initializes an OAuth flow from the client_config dictionary.
+    flow = Flow.from_client_config(
+        client_config,
         scopes=OAUTH_SCOPES,
         redirect_uri=OAUTH_REDIRECT_URI
     )
@@ -324,34 +358,52 @@ def authorize():
     return redirect(auth_url)
 
 
-@app.route("/oauth2callback")
+@app.route("/callback/oauth2callback")
 def oauth2callback():
+    # Check if state exists in session
+    if "state" not in session:
+        flash("Authentication session expired. Please try again.", FLASH_WARNING)
+        return redirect("/authorize")
+    
     # Retrieves the state token from session to verify that this callback is legitimate.
     state = session["state"]
 
-    # Sets up the OAuth flow again with the same scopes and redirect URI to complete token exchange.
-    flow = Flow.from_client_secrets_file(
-        CREDENTIALS_FILE,
+    print("[OAuth2 Callback] State:", state)
+
+    # Sets up the OAuth flow again with the same config to complete token exchange.
+    flow = Flow.from_client_config(
+        client_config,
         scopes=OAUTH_SCOPES,
+        state=state,
         redirect_uri=OAUTH_REDIRECT_URI
     )
+    
+    # flow.state = state  # Set the state on the flow object
 
-    # Exchanges the authorization response URL for a set of access tokens.
-    flow.fetch_token(authorization_response=request.url)
+    try:
+        # Exchanges the authorization response URL for a set of access tokens.
+        flow.fetch_token(authorization_response=request.url)
+        
+        creds = flow.credentials
 
-    creds = flow.credentials
+        session["credentials"] = {
+            "token": creds.token,
+            "refresh_token": creds.refresh_token,
+            "client_id": creds.client_id,
+            "client_secret": creds.client_secret,
+            "scopes": creds.scopes
+        }
+        
+        # Clean up the state from session
+        session.pop("state", None)
+        
+        flash("Successfully authenticated!", FLASH_SUCCESS)
+        return redirect("/")
+        
+    except Exception as e:
 
-    # Stores credential details in the session so they can be reused for API calls.
-    session["credentials"] = {
-        "token": creds.token,
-        "refresh_token": creds.refresh_token,
-        "token_uri": creds.token_uri,
-        "client_id": creds.client_id,
-        "client_secret": creds.client_secret,
-        "scopes": creds.scopes
-    }
-
-    return redirect("/")
+        flash("Authentication failed. Please try again.", FLASH_DANGER)
+        return redirect("/authorize")
 
 def get_thumbnail_url(file_id, creds):
     service = build("drive", GOOGLE_DRIVE_API_VERSION, credentials=creds)
@@ -369,8 +421,10 @@ def get_thumbnail_url(file_id, creds):
 ### - Main Route - ###
 @app.route("/", methods=["GET", "POST"])
 def index():
+
     if "credentials" not in session:
-        return redirect("/authorize")
+        print("No credentials found in session, redirecting to authorize.")
+        return redirect("/authorize")  # Add 'return' here - this was missing!
 
     creds = Credentials(**session["credentials"])
     oauth2_service = build("oauth2", OAUTH2_API_VERSION, credentials=creds)
@@ -378,7 +432,7 @@ def index():
     email = user_info.get("email")
 
     if email not in ALLOWED_USERS:
-        return abort(403)
+        return abort(403, description="You are not authorized to access this application.")
 
     page = int(request.args.get("page", DEFAULT_PAGE))
     per_page = ITEMS_PER_PAGE
@@ -590,4 +644,4 @@ if __name__ == "__main__":
     init_db()
 
     # Starts the Flask web server on all network interfaces at port 8080 so it can be accessed externally.
-    app.run(host=SERVER_HOST, port=SERVER_PORT)
+    app.run(host=SERVER_HOST, port=SERVER_PORT, debug=True)
