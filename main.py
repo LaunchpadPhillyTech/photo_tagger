@@ -57,15 +57,17 @@ if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_PROJECT_ID]):
 # It's constructed from environment variables instead of a JSON file.
 client_config = {
     "web": {
-        "client_id": GOOGLE_CLIENT_ID,
         "project_id": GOOGLE_PROJECT_ID,
+        "client_id": GOOGLE_CLIENT_ID,
         "auth_uri": "https://accounts.google.com/o/oauth2/auth",
         "token_uri": "https://oauth2.googleapis.com/token",
         "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
         "client_secret": GOOGLE_CLIENT_SECRET,
-        "redirect_uris": [OAUTH_REDIRECT_URI],
+        "redirect_uri": OAUTH_REDIRECT_URI,
     }
 }
+
+print(f"[OAuth Config] Client ID: {GOOGLE_CLIENT_ID}..., Redirect URI: {OAUTH_REDIRECT_URI}")
 
 OAUTH_SCOPES = [
     "https://www.googleapis.com/auth/drive.readonly",
@@ -75,7 +77,7 @@ OAUTH_SCOPES = [
 ]
 
 # Server Configuration
-SERVER_HOST = "0.0.0.0"
+SERVER_HOST = "localhost"
 SERVER_PORT = int(os.getenv("PORT", 3000))
 
 print(f"[Server Configuration] Running on {SERVER_HOST}:{SERVER_PORT}") 
@@ -369,6 +371,8 @@ def oauth2callback():
     state = session["state"]
 
     print("[OAuth2 Callback] State:", state)
+    print("[OAuth2 Callback] Request URL:", request.url)
+    print("[OAuth2 Callback] Request args:", request.args)
 
     # Sets up the OAuth flow again with the same config to complete token exchange.
     flow = Flow.from_client_config(
@@ -377,18 +381,21 @@ def oauth2callback():
         state=state,
         redirect_uri=OAUTH_REDIRECT_URI
     )
-    
-    # flow.state = state  # Set the state on the flow object
 
     try:
         # Exchanges the authorization response URL for a set of access tokens.
-        flow.fetch_token(authorization_response=request.url)
+        token = flow.fetch_token(authorization_response=request.url)
         
         creds = flow.credentials
+
+        # print(f"[OAuth2 Callback] Token fetched successfully: {token}")
+        # print(f"[OAuth2 Callback] Credentials: {creds}")
+        # print(f"[OAuth2 Callback] Scopes: {creds.scopes}")  
 
         session["credentials"] = {
             "token": creds.token,
             "refresh_token": creds.refresh_token,
+            "token_uri": "https://oauth2.googleapis.com/token",
             "client_id": creds.client_id,
             "client_secret": creds.client_secret,
             "scopes": creds.scopes
@@ -401,8 +408,15 @@ def oauth2callback():
         return redirect("/")
         
     except Exception as e:
-
-        flash("Authentication failed. Please try again.", FLASH_DANGER)
+        import traceback
+        print(f"[OAuth2 Callback] Error type: {type(e).__name__}")
+        print(f"[OAuth2 Callback] Error message: {e}")
+        print(f"[OAuth2 Callback] Request URL: {request.url}")
+        print(f"[OAuth2 Callback] Request args: {request.args}")
+        print(f"[OAuth2 Callback] Flow state: {getattr(flow, 'state', 'No state')}")
+        print(f"[OAuth2 Callback] Session state: {session.get('state', 'No state')}")
+        print(f"[OAuth2 Callback] Traceback: {traceback.format_exc()}")
+        flash(f"Authentication failed: {str(e)}", FLASH_DANGER)
         return redirect("/authorize")
 
 def get_thumbnail_url(file_id, creds):
@@ -424,7 +438,7 @@ def index():
 
     if "credentials" not in session:
         print("No credentials found in session, redirecting to authorize.")
-        return redirect("/authorize")  # Add 'return' here - this was missing!
+        return redirect("/authorize")
 
     creds = Credentials(**session["credentials"])
     oauth2_service = build("oauth2", OAUTH2_API_VERSION, credentials=creds)
