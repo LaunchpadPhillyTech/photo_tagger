@@ -12,6 +12,7 @@ load_dotenv()  # Load environment variables from .env file
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
+from googleapiclient.http import BatchHttpRequest
 import googleapiclient.discovery
 from googleapiclient.discovery import build
 
@@ -128,7 +129,7 @@ def save_backup(backup_name=None):
         full_data.append({
             "id": file_id,
             "tags": json.loads(tags_json),
-            "thumb_url": thumb
+            "thumb_url": "https://drive.google.com/file/d/{thumb}/view"
         })
 
     # 3) Store it as JSON in backups
@@ -222,21 +223,97 @@ def load_data(page=DEFAULT_PAGE, per_page=ITEMS_PER_PAGE):
         LIMIT ? OFFSET ?
     """, (per_page, offset))
     rows = c.fetchall()
-    conn.close()
 
     data = []
+    expired_files = {}
+
+    # Collect expired thumbnails.
     for file_id, tag_str, thumb in rows:
-        data.append({
-            "id": file_id,
-            "tags": json.loads(tag_str),
-            "thumb_url": thumb or DEFAULT_THUMBNAIL
-        })
-    return data
+        # Check if the thumbnail is missing/expired.
+        if not thumb or thumb.startswith("https://lh3.googleusercontent.com/"):
+            expired_files[file_id] = tag_str
+        # If thumbnail is valid, add normally.
+        else:
+            data.append({
+                "id": file_id,
+                "tags": json.loads(tag_str),
+                "thumb_url": thumb
+            })
 
+    # Batch API call only if we have expired thumbnails.
+    if expired_files and "credentials" in session:
+        creds = Credentials(**session["credentials"])
+        service = build("drive", GOOGLE_DRIVE_API_VERSION, credentials=creds)
 
-    # Closes the connection and returns the fully loaded data list.
+        batch = BatchHttpRequest(batch_uri='https://www.googleapis.com/batch/drive/v3')
+
+        # Callback for each result.
+        def callback(request_id, response, exception):
+            if exception:
+                print(f"Thumbnail fetch failed for {request_id}: {exception}")
+                return
+            
+            # Add to data list with new thumbnail or default.
+            file_id = request_id
+            new_thumb = response.get("thumbnailLink")
+            tag_str = expired_files[file_id]
+            thumb_url = new_thumb or DEFAULT_THUMBNAIL
+            data.append({
+                "id": file_id,
+                "tags": json.loads(tag_str),
+                "thumb_url": thumb_url
+            })
+
+            # Update database with new thumbnail.
+            if new_thumb:
+                c.execute("UPDATE images SET thumbnail = ? WHERE id = ?", (new_thumb, file_id))
+
+        # Add all get requests to the batch.
+        for file_id in expired_files.keys():
+            batch.add(
+                service.files().get(
+                    fileId=file_id,
+                    fields=DRIVE_THUMBNAIL_FIELDS,
+                    supportsAllDrives=True
+                ),
+                request_id=file_id,
+                callback=callback
+            )
+
+        # Execute batch request for images.
+        batch.execute()
+
+    conn.commit()
     conn.close()
+
     return data
+
+# def load_data(page=DEFAULT_PAGE, per_page=ITEMS_PER_PAGE):
+#     offset = (page - 1) * per_page
+#     conn = sqlite3.connect(DB_FILE)
+#     c = conn.cursor()
+
+#     c.execute("""
+#         SELECT id, tags, thumbnail
+#         FROM images
+#         ORDER BY id
+#         LIMIT ? OFFSET ?
+#     """, (per_page, offset))
+#     rows = c.fetchall()
+#     conn.close()
+
+#     data = []
+#     for file_id, tag_str, thumb in rows:
+#         data.append({
+#             "id": file_id,
+#             "tags": json.loads(tag_str),
+#             "thumb_url": thumb or DEFAULT_THUMBNAIL
+#         })
+
+#     # Closes the connection and returns the fully loaded data list.
+#     conn.close()
+#     return data
+
 
 
 def save_item(item_id, tags):
