@@ -186,6 +186,9 @@ def list_backups():
     return backups
 
 def init_db():
+    # Ensure data directory exists
+    os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
+    
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
 
@@ -734,5 +737,21 @@ if __name__ == "__main__":
     # Initializes the database (creates tables if needed) on startup.
     init_db()
 
-    # Starts the Flask web server on all network interfaces at port 8080 so it can be accessed externally.
-    app.run(host=SERVER_HOST, port=SERVER_PORT, debug=True)
+    # Add production configuration
+    PRODUCTION = os.getenv("PRODUCTION", "false").lower() == "true"
+
+    # Update session configuration for production
+    app.config['SESSION_COOKIE_SECURE'] = PRODUCTION  # HTTPS only in production
+    app.config['SESSION_COOKIE_HTTPONLY'] = True
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+
+    # Remove insecure transport for production
+    if not PRODUCTION:
+        os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
+    # Update server configuration
+    app.run(
+        host="0.0.0.0" if PRODUCTION else SERVER_HOST,
+        port=SERVER_PORT,
+        debug=not PRODUCTION
+    )
