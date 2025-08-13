@@ -224,5 +224,39 @@
       {% endfor %}
     </ul>
   </nav>
+
+<!-- Debugging Tools -->
+<div class="debug-controls">
+    <h4>Debug Tools</h4>
+    
+    <!-- Full diagnostics -->
+    <a href="/diagnostics" class="btn btn-info">Run Diagnostics</a>
+    
+    <!-- Test mode refresh (only 5 files) -->
+    <form method="POST" action="/refresh/thumbnails" style="display: inline;">
+        <input type="hidden" name="test_mode" value="true">
+        <button type="submit" class="btn btn-primary">Test Refresh (5 files)</button>
+    </form>
+    
+    <!-- Test single file -->
+    <form method="POST" action="/test/single/1K3Na36ffxR4L1Fv6fXESfGzn8iih2kgh" style="display: inline;">
+        <button type="submit" class="btn btn-secondary">Test Single File</button>
+    </form>
+
+      <!-- Thumbnail Refresh -->
+    <form method="POST" action="/refresh/thumbnails" style="display: inline;">
+        <button type="submit" class="btn btn-warning" onclick="return confirm('This will refresh ALL thumbnails. Continue?')">
+            Refresh All Thumbnails
+        </button>
+    </form>
+
+    <!-- Clear without regenerating -->
+    <form method="POST" action="/clear/thumbnails" style="display: inline;">
+        <button type="submit" class="btn btn-secondary" onclick="return confirm('This will clear all thumbnails. Continue?')">
+            Clear All Thumbnails
+        </button>
+    </form>
+</div>
+
 </body>
 </html>

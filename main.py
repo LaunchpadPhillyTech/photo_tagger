@@ -12,6 +12,7 @@ load_dotenv()  # Load environment variables from .env file
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
+from google.auth.transport.requests import Request
 from googleapiclient.http import BatchHttpRequest
 import googleapiclient.discovery
 from googleapiclient.discovery import build
@@ -146,34 +147,269 @@ def save_backup(backup_name=None):
     conn.commit()
     conn.close()
 
-def load_backup(backup_id):
+def is_valid_thumbnail(thumb):
+    """
+    Enhanced validation for thumbnail URLs.
+    Returns True only for valid, non-expired Google Drive thumbnails.
+    """
+    if not thumb:
+        return False
+    if not isinstance(thumb, str):
+        return False
+    
+    thumb = thumb.strip()
+    if not thumb:
+        return False
+    
+    # Must be a proper HTTP(S) URL
+    if not (thumb.startswith("http://") or thumb.startswith("https://")):
+        return False
+    
+    # Reject our default placeholder thumbnail
+    if thumb == DEFAULT_THUMBNAIL:
+        return False
+    
+    # UPDATED: Only reject OLD expired formats, not the new drive-storage URLs
+    # Old expired patterns (these are truly expired)
+    old_expired_patterns = [
+        "lh3.googleusercontent.com/u/",  # Old user-specific URLs
+        "lh4.googleusercontent.com/u/",
+        "lh5.googleusercontent.com/u/",
+        "lh6.googleusercontent.com/u/",
+        # Add other old patterns that are definitely expired
+    ]
+    
+    for pattern in old_expired_patterns:
+        if pattern in thumb:
+            return False
+    
+    # ACCEPT the new drive-storage format - these are VALID
+    if "lh3.googleusercontent.com/drive-storage/" in thumb:
+        return True
+    if "lh4.googleusercontent.com/drive-storage/" in thumb:
+        return True
+    if "lh5.googleusercontent.com/drive-storage/" in thumb:
+        return True
+    if "lh6.googleusercontent.com/drive-storage/" in thumb:
+        return True
+    
+    # Reject obvious broken/expired indicators in URL
+    invalid_tokens = [
+        "expired", "null", "notfound", "deleted", "unavailable", 
+        "error", "invalid", "broken", "404", "403"
+    ]
+    
+    lower_thumb = thumb.lower()
+    for token in invalid_tokens:
+        if token in lower_thumb:
+            return False
+    
+    # Additional check: reject very short URLs (likely broken)
+    if len(thumb) < 20:
+        return False
+    
+    # Accept other valid Google domains
+    valid_domains = [
+        "drive.google.com", 
+        "drive.usercontent.google.com",
+        "googleusercontent.com"  # Accept all googleusercontent.com domains
+    ]
+    
+    has_valid_domain = any(domain in thumb for domain in valid_domains)
+    return has_valid_domain
+
+
+def is_expired_thumbnail(thumb):
+    """
+    Separate function to check if a thumbnail should be considered expired.
+    This is more conservative - only flags truly old/broken URLs for refresh.
+    """
+    if not thumb:
+        return True
+    
+    # These are the OLD patterns that should definitely be refreshed
+    truly_expired_patterns = [
+        "lh3.googleusercontent.com/u/",  # Old user-specific format
+        "lh4.googleusercontent.com/u/",
+        "lh5.googleusercontent.com/u/",
+        "lh6.googleusercontent.com/u/",
+        "photos.google.com",  # Very old format
+    ]
+    
+    for pattern in truly_expired_patterns:
+        if pattern in thumb:
+            return True
+    
+    # Default placeholder should be refreshed
+    if thumb == DEFAULT_THUMBNAIL:
+        return True
+        
+    return False
+
+
+def force_refresh_all_thumbnails():
+    """
+    Utility function to completely regenerate all thumbnails from scratch.
+    This can be called during maintenance or when you suspect widespread thumbnail issues.
+    """
+    if "credentials" not in session:
+        return False, "No credentials available"
+    
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    try:
+        # STEP 1: Get all file IDs
+        c.execute("SELECT id FROM images")
+        all_files = [row[0] for row in c.fetchall()]
+        
+        if not all_files:
+            return False, "No files found"
+        
+        # STEP 2: Nuclear option - clear ALL thumbnails
+        c.execute("UPDATE images SET thumbnail = NULL")
+        conn.commit()
+        
+        # STEP 3: Regenerate everything
+        creds = Credentials(**session["credentials"])
+        service = build("drive", GOOGLE_DRIVE_API_VERSION, credentials=creds)
+        
+        success_count = 0
+        fail_count = 0
+        
+        # Process in smaller batches for reliability
+        batch_size = 25
+        
+        for i in range(0, len(all_files), batch_size):
+            batch_files = all_files[i:i + batch_size]
+            batch = BatchHttpRequest(batch_uri='https://www.googleapis.com/batch/drive/v3')
+            batch_results = {}
+            
+            def callback(request_id, response, exception):
+                if exception:
+                    batch_results[request_id] = None
+                else:
+                    thumbnail = response.get("thumbnailLink")
+                    # Double-check validity
+                    if thumbnail and is_valid_thumbnail(thumbnail):
+                        batch_results[request_id] = thumbnail
+                    else:
+                        batch_results[request_id] = None
+            
+            for file_id in batch_files:
+                batch.add(
+                    service.files().get(
+                        fileId=file_id,
+                        fields=DRIVE_THUMBNAIL_FIELDS,
+                        supportsAllDrives=True
+                    ),
+                    request_id=file_id,
+                    callback=callback
+                )
+            
+            try:
+                batch.execute()
+                
+                for file_id in batch_files:
+                    new_thumb = batch_results.get(file_id)
+                    if new_thumb:
+                        c.execute("UPDATE images SET thumbnail = ? WHERE id = ?", (new_thumb, file_id))
+                        success_count += 1
+                    else:
+                        c.execute("UPDATE images SET thumbnail = ? WHERE id = ?", (DEFAULT_THUMBNAIL, file_id))
+                        fail_count += 1
+                
+                conn.commit()
+                
+            except Exception as e:
+                print(f"Batch failed: {e}")
+                # Mark entire batch as failed
+                for file_id in batch_files:
+                    c.execute("UPDATE images SET thumbnail = ? WHERE id = ?", (DEFAULT_THUMBNAIL, file_id))
+                    fail_count += 1
+                conn.commit()
+        
+        conn.close()
+        return True, f"Refreshed {success_count} thumbnails, {fail_count} failed"
+        
+    except Exception as e:
+        conn.close()
+        return False, f"Error during refresh: {str(e)}"
+
+def load_backup(backup_id, creds=None, try_refresh_missing=True):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
 
     c.execute("SELECT data FROM backups WHERE id = ?", (backup_id,))
     row = c.fetchone()
-    conn.close()
-
     if not row:
-        return False  # No backup found
+        conn.close()
+        return False
 
-    data = json.loads(row[0])
+    try:
+        data = json.loads(row[0])
+    except Exception as e:
+        print(f"[load_backup] malformed backup JSON for id {backup_id}: {e}")
+        conn.close()
+        return False
 
-    # Clear current data
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("DELETE FROM images")
-
-    # Restore all items from backup (including thumbnail)
+    # Upsert each item: prefer existing valid thumbnail when present.
     for item in data:
-        # Use .get('thumb_url') to handle possible missing keys safely
-        thumbnail = item.get("thumb_url", None)
-        c.execute(
-            "INSERT INTO images (id, tags, thumbnail) VALUES (?, ?, ?)",
-            (item["id"], json.dumps(item["tags"]), thumbnail)
-        )
+        file_id = item.get("id")
+        if not file_id:
+            continue
+        backup_tags = item.get("tags", [])
+        backup_thumb = item.get("thumb_url", None)
+
+        # check current DB state for this file
+        c.execute("SELECT tags, thumbnail FROM images WHERE id = ?", (file_id,))
+        existing = c.fetchone()
+
+        if existing:
+            existing_tags_json, existing_thumb = existing
+            # prefer DB thumbnail if valid
+            if is_valid_thumbnail(existing_thumb):
+                chosen_thumb = existing_thumb
+            elif is_valid_thumbnail(backup_thumb):
+                chosen_thumb = backup_thumb
+            else:
+                chosen_thumb = None
+
+            # Overwrite tags with backup tags to restore backup state
+            c.execute(
+                "UPDATE images SET tags = ?, thumbnail = ? WHERE id = ?",
+                (json.dumps(backup_tags), chosen_thumb, file_id)
+            )
+
+        else:
+            chosen_thumb = backup_thumb if is_valid_thumbnail(backup_thumb) else None
+            c.execute(
+                "INSERT INTO images (id, tags, thumbnail) VALUES (?, ?, ?)",
+                (file_id, json.dumps(backup_tags), chosen_thumb)
+            )
 
     conn.commit()
+
+    # Optionally attempt to refresh thumbnails for rows that still lack a valid thumbnail
+    if try_refresh_missing and creds:
+        # Collect ids that need thumbnail refresh
+        c.execute("SELECT id FROM images WHERE thumbnail IS NULL OR thumbnail = ''")
+        needs = [r[0] for r in c.fetchall()]
+
+        # If none needed, skip
+        if needs:
+            print(f"[load_backup] refreshing thumbnails for {len(needs)} items...")
+            # Note: for large lists you may want a batch approach and quota-safe delays.
+            for fid in needs:
+                try:
+                    new_thumb = get_thumbnail_url(fid, creds)
+                    if is_valid_thumbnail(new_thumb):
+                        c.execute("UPDATE images SET thumbnail = ? WHERE id = ?", (new_thumb, fid))
+                except Exception as e:
+                    # Don't stop the restore if a fetch fails; just log and continue.
+                    print(f"[load_backup] thumbnail fetch failed for {fid}: {e}")
+            conn.commit()
+
     conn.close()
     return True
 
@@ -230,12 +466,10 @@ def load_data(page=DEFAULT_PAGE, per_page=ITEMS_PER_PAGE):
     data = []
     expired_files = {}
 
-    # Collect expired thumbnails.
     for file_id, tag_str, thumb in rows:
-        # Check if the thumbnail is missing/expired.
-        if not thumb or thumb.startswith("https://lh3.googleusercontent.com/"):
+        # Use the new expired check function - only refresh truly old/broken URLs
+        if not thumb or is_expired_thumbnail(thumb):
             expired_files[file_id] = tag_str
-        # If thumbnail is valid, add normally.
         else:
             data.append({
                 "id": file_id,
@@ -243,35 +477,32 @@ def load_data(page=DEFAULT_PAGE, per_page=ITEMS_PER_PAGE):
                 "thumb_url": thumb
             })
 
-    # Batch API call only if we have expired thumbnails.
+    # Only attempt to refresh thumbnails if we have expired files AND credentials
     if expired_files and "credentials" in session:
         creds = Credentials(**session["credentials"])
         service = build("drive", GOOGLE_DRIVE_API_VERSION, credentials=creds)
-
+        
+        # First, clear all expired thumbnails from database
+        expired_ids = list(expired_files.keys())
+        placeholders = ','.join(['?' for _ in expired_ids])
+        c.execute(f"UPDATE images SET thumbnail = NULL WHERE id IN ({placeholders})", expired_ids)
+        conn.commit()
+        
         batch = BatchHttpRequest(batch_uri='https://www.googleapis.com/batch/drive/v3')
+        refreshed_thumbnails = {}
 
-        # Callback for each result.
         def callback(request_id, response, exception):
             if exception:
                 print(f"Thumbnail fetch failed for {request_id}: {exception}")
+                refreshed_thumbnails[request_id] = DEFAULT_THUMBNAIL
                 return
             
-            # Add to data list with new thumbnail or default.
-            file_id = request_id
-            new_thumb = response.get("thumbnailLink")
-            tag_str = expired_files[file_id]
-            thumb_url = new_thumb or DEFAULT_THUMBNAIL
-            data.append({
-                "id": file_id,
-                "tags": json.loads(tag_str),
-                "thumb_url": thumb_url
-            })
+            new_thumbnail = response.get("thumbnailLink")
+            if new_thumbnail and is_valid_thumbnail(new_thumbnail):
+                refreshed_thumbnails[request_id] = new_thumbnail
+            else:
+                refreshed_thumbnails[request_id] = DEFAULT_THUMBNAIL
 
-            # Update database with new thumbnail.
-            if new_thumb:
-                c.execute("UPDATE images SET thumbnail = ? WHERE id = ?", (new_thumb, file_id))
-
-        # Add all get requests to the batch.
         for file_id in expired_files.keys():
             batch.add(
                 service.files().get(
@@ -283,8 +514,44 @@ def load_data(page=DEFAULT_PAGE, per_page=ITEMS_PER_PAGE):
                 callback=callback
             )
 
-        # Execute batch request for images.
-        batch.execute()
+        try:
+            batch.execute()  # Execute the batch request
+            
+            # After batch finishes, update DB with completely new thumbnails
+            for file_id, tag_str in expired_files.items():
+                new_thumb_url = refreshed_thumbnails.get(file_id, DEFAULT_THUMBNAIL)
+                
+                # Add the item to data with refreshed thumbnail
+                data.append({
+                    "id": file_id,
+                    "tags": json.loads(tag_str),
+                    "thumb_url": new_thumb_url
+                })
+                
+                # Update the database with the completely new thumbnail
+                c.execute("UPDATE images SET thumbnail = ? WHERE id = ?", (new_thumb_url, file_id))
+                
+        except Exception as e:
+            print(f"Batch execution failed: {e}")
+            # Fallback: add expired files with default thumbnail and clear DB thumbnails
+            for file_id, tag_str in expired_files.items():
+                data.append({
+                    "id": file_id,
+                    "tags": json.loads(tag_str),
+                    "thumb_url": DEFAULT_THUMBNAIL
+                })
+                # Set to DEFAULT_THUMBNAIL instead of leaving null
+                c.execute("UPDATE images SET thumbnail = ? WHERE id = ?", (DEFAULT_THUMBNAIL, file_id))
+    else:
+        # If no credentials or no expired files, add expired files with default thumbnail
+        for file_id, tag_str in expired_files.items():
+            data.append({
+                "id": file_id,
+                "tags": json.loads(tag_str),
+                "thumb_url": DEFAULT_THUMBNAIL
+            })
+            # Clear the expired thumbnail from database
+            c.execute("UPDATE images SET thumbnail = ? WHERE id = ?", (DEFAULT_THUMBNAIL, file_id))
 
     conn.commit()
     conn.close()
@@ -316,7 +583,6 @@ def load_data(page=DEFAULT_PAGE, per_page=ITEMS_PER_PAGE):
 #     # Closes the connection and returns the fully loaded data list.
 #     conn.close()
 #     return data
-
 
 
 def save_item(item_id, tags):
@@ -432,7 +698,7 @@ def authorize():
     )
 
     # Generates an authorization URL that users will visit to grant access and return a state token.
-    auth_url, state = flow.authorization_url(access_type="offline", include_granted_scopes="true")
+    auth_url, state = flow.authorization_url(access_type="offline", include_granted_scopes="true", prompt="consent")
 
     # Stores the state in session so it can be verified later when Google redirects back.
     session["state"] = state
@@ -703,11 +969,18 @@ def backup_save():
 
 @app.route("/backup/load/<int:backup_id>", methods=["POST"])
 def backup_load(backup_id):
-    success = load_backup(backup_id)
+    creds = None
+    if "credentials" in session:
+        try:
+            creds = Credentials(**session["credentials"])
+        except Exception:
+            creds = None
+
+    success = load_backup(backup_id, creds=creds, try_refresh_missing=True)
     if success:
-        flash("Backup loaded successfully!")
+        flash("Backup loaded successfully!", FLASH_SUCCESS)
     else:
-        flash("Backup not found!", FLASH_DANGER)
+        flash("Backup not found or could not be loaded.", FLASH_DANGER)
     return redirect("/")
 
 @app.route("/backup/delete/<int:backup_id>", methods=["POST"])
@@ -731,6 +1004,389 @@ def delete_all_photos():
     conn.close()
     flash("All photos and tags have been deleted.", FLASH_WARNING)
     return redirect("/")
+
+### - Thumbnail Refresh - ###
+@app.route("/refresh/thumbnails", methods=["POST"])
+def refresh_thumbnails():
+    if "credentials" not in session:
+        flash("Please authenticate first.", FLASH_DANGER)
+        return redirect("/authorize")
+    
+    try:
+        creds = Credentials(**session["credentials"])
+        
+        # Test credentials first
+        oauth2_service = build("oauth2", OAUTH2_API_VERSION, credentials=creds)
+        user_info = oauth2_service.userinfo().get().execute()
+        print(f"[DEBUG] Authenticated as: {user_info.get('email')}")
+        
+        service = build("drive", GOOGLE_DRIVE_API_VERSION, credentials=creds)
+        
+        # Test basic Drive API access
+        about = service.about().get(fields="user").execute()
+        print(f"[DEBUG] Drive API access confirmed for user: {about.get('user', {}).get('emailAddress')}")
+        
+    except Exception as e:
+        print(f"[DEBUG] Authentication/API test failed: {e}")
+        flash(f"Authentication error: {str(e)}", FLASH_DANGER)
+        return redirect("/authorize")
+    
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    # Get a small sample first for testing (limit to 5 files)
+    test_mode = request.form.get("test_mode") == "true"
+    if test_mode:
+        c.execute("SELECT id FROM images LIMIT 5")
+        flash("Running in test mode (5 files only)", FLASH_INFO)
+    else:
+        c.execute("SELECT id FROM images")
+    
+    all_files = [row[0] for row in c.fetchall()]
+    
+    if not all_files:
+        flash("No files found to refresh.", FLASH_INFO)
+        return redirect("/")
+    
+    print(f"[DEBUG] Found {len(all_files)} files to process")
+    print(f"[DEBUG] Sample file IDs: {all_files[:3]}")
+    
+    # STEP 1: Clear existing thumbnails
+    if not test_mode:
+        c.execute("UPDATE images SET thumbnail = NULL")
+        conn.commit()
+    
+    refreshed_count = 0
+    failed_count = 0
+    error_details = {}
+    
+    # STEP 2: Process in very small batches for debugging
+    batch_size = 3 if test_mode else 10  # Smaller batches for better error tracking
+    
+    for i in range(0, len(all_files), batch_size):
+        batch_files = all_files[i:i + batch_size]
+        print(f"[DEBUG] Processing batch {i//batch_size + 1}: {batch_files}")
+        
+        # Try individual requests first instead of batch for better error tracking
+        for file_id in batch_files:
+            try:
+                print(f"[DEBUG] Fetching thumbnail for file: {file_id}")
+                
+                # Single request with detailed error handling
+                file_metadata = service.files().get(
+                    fileId=file_id,
+                    fields="id,name,mimeType,thumbnailLink,trashed,parents",
+                    supportsAllDrives=True
+                ).execute()
+                
+                print(f"[DEBUG] File metadata for {file_id}:")
+                print(f"  - Name: {file_metadata.get('name', 'Unknown')}")
+                print(f"  - MimeType: {file_metadata.get('mimeType', 'Unknown')}")
+                print(f"  - Trashed: {file_metadata.get('trashed', False)}")
+                print(f"  - Has thumbnail: {'thumbnailLink' in file_metadata}")
+                
+                thumbnail_url = file_metadata.get("thumbnailLink")
+                
+                if thumbnail_url:
+                    print(f"[DEBUG] Got thumbnail URL: {thumbnail_url[:100]}...")
+                    
+                    if is_valid_thumbnail(thumbnail_url):
+                        c.execute("UPDATE images SET thumbnail = ? WHERE id = ?", (thumbnail_url, file_id))
+                        refreshed_count += 1
+                        print(f"[DEBUG] ✓ Updated thumbnail for {file_id}")
+                    else:
+                        print(f"[DEBUG] ✗ Invalid thumbnail URL for {file_id}")
+                        c.execute("UPDATE images SET thumbnail = ? WHERE id = ?", (DEFAULT_THUMBNAIL, file_id))
+                        failed_count += 1
+                        error_details[file_id] = "Invalid thumbnail URL"
+                else:
+                    print(f"[DEBUG] ✗ No thumbnail available for {file_id}")
+                    c.execute("UPDATE images SET thumbnail = ? WHERE id = ?", (DEFAULT_THUMBNAIL, file_id))
+                    failed_count += 1
+                    error_details[file_id] = "No thumbnail in response"
+                
+            except Exception as e:
+                print(f"[DEBUG] ✗ Error processing {file_id}: {e}")
+                c.execute("UPDATE images SET thumbnail = ? WHERE id = ?", (DEFAULT_THUMBNAIL, file_id))
+                failed_count += 1
+                error_details[file_id] = str(e)
+        
+        conn.commit()  # Commit after each batch
+        
+        # Small delay to avoid hitting rate limits
+        import time
+        time.sleep(0.5)
+    
+    conn.close()
+    
+    # Print detailed error summary
+    print(f"[DEBUG] Final results:")
+    print(f"  - Successful: {refreshed_count}")
+    print(f"  - Failed: {failed_count}")
+    print(f"  - Error breakdown:")
+    
+    error_summary = {}
+    for file_id, error in error_details.items():
+        error_type = error.split(':')[0] if ':' in error else error
+        error_summary[error_type] = error_summary.get(error_type, 0) + 1
+    
+    for error_type, count in error_summary.items():
+        print(f"    - {error_type}: {count} files")
+    
+    # Create detailed flash message
+    total_files = len(all_files)
+    if refreshed_count > 0:
+        message = f"Refreshed {refreshed_count}/{total_files} thumbnails successfully."
+        if failed_count > 0:
+            top_errors = sorted(error_summary.items(), key=lambda x: x[1], reverse=True)[:3]
+            error_text = ", ".join([f"{err}: {count}" for err, count in top_errors])
+            message += f" Failures: {error_text}"
+        flash(message, FLASH_SUCCESS if refreshed_count > failed_count else FLASH_WARNING)
+    else:
+        top_errors = sorted(error_summary.items(), key=lambda x: x[1], reverse=True)[:2]
+        error_text = ", ".join([f"{err}: {count}" for err, count in top_errors])
+        flash(f"All {total_files} thumbnails failed. Main issues: {error_text}", FLASH_DANGER)
+    
+    return redirect("/")
+
+@app.route("/clear/thumbnails", methods=["POST"])
+def clear_all_thumbnails():
+    """Route to completely clear all thumbnails without refreshing"""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    # Clear ALL thumbnails
+    c.execute("UPDATE images SET thumbnail = NULL")
+    affected_rows = c.rowcount
+    conn.commit()
+    conn.close()
+    
+    flash(f"Cleared all thumbnails for {affected_rows} images. Use 'Refresh All Thumbnails' to regenerate them.", FLASH_INFO)
+    return redirect("/")
+
+@app.route("/test/single/<file_id>", methods=["POST"])
+def test_single_thumbnail(file_id):
+    """Test thumbnail fetch for a single file with full debugging"""
+    if "credentials" not in session:
+        flash("Please authenticate first.", FLASH_DANGER)
+        return redirect("/authorize")
+    
+    try:
+        creds = Credentials(**session["credentials"])
+        service = build("drive", GOOGLE_DRIVE_API_VERSION, credentials=creds)
+        
+        print(f"[SINGLE TEST] Testing file: {file_id}")
+        
+        # Get full file metadata
+        file_metadata = service.files().get(
+            fileId=file_id,
+            fields="*",  # Get all fields for debugging
+            supportsAllDrives=True
+        ).execute()
+        
+        print(f"[SINGLE TEST] Full metadata:")
+        for key, value in file_metadata.items():
+            if key != 'thumbnailLink' or len(str(value)) < 200:
+                print(f"  {key}: {value}")
+            else:
+                print(f"  {key}: {str(value)[:100]}...")
+        
+        thumbnail_url = file_metadata.get("thumbnailLink")
+        
+        if thumbnail_url:
+            valid = is_valid_thumbnail(thumbnail_url)
+            flash(f"File {file_id}: Found thumbnail ({'valid' if valid else 'invalid'}). URL: {thumbnail_url[:100]}...", FLASH_INFO)
+        else:
+            flash(f"File {file_id}: No thumbnail available. File type: {file_metadata.get('mimeType')}", FLASH_WARNING)
+        
+    except Exception as e:
+        flash(f"Error testing file {file_id}: {str(e)}", FLASH_DANGER)
+        print(f"[SINGLE TEST] Error: {e}")
+    
+    return redirect("/")
+
+@app.route("/diagnostics", methods=["GET", "POST"])
+def diagnostics():
+    """Comprehensive diagnostics for thumbnail issues"""
+    if "credentials" not in session:
+        flash("Please authenticate first.", FLASH_DANGER)
+        return redirect("/authorize")
+    
+    results = []
+    
+    try:
+        # Test 1: Basic authentication
+        creds = Credentials(**session["credentials"])
+        results.append("✓ Credentials loaded successfully")
+        
+        # Test 2: OAuth2 API access
+        oauth2_service = build("oauth2", OAUTH2_API_VERSION, credentials=creds)
+        user_info = oauth2_service.userinfo().get().execute()
+        results.append(f"✓ OAuth2 API: Authenticated as {user_info.get('email')}")
+        
+        # Test 3: Drive API access
+        service = build("drive", GOOGLE_DRIVE_API_VERSION, credentials=creds)
+        about = service.about().get(fields="user,storageQuota").execute()
+        results.append(f"✓ Drive API: Access confirmed")
+        
+        # Test 4: Check database
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM images")
+        total_images = c.fetchone()[0]
+        
+        c.execute("SELECT COUNT(*) FROM images WHERE thumbnail IS NOT NULL AND thumbnail != ''")
+        with_thumbnails = c.fetchone()[0]
+        
+        c.execute("SELECT id FROM images LIMIT 1")
+        sample_file = c.fetchone()
+        conn.close()
+        
+        results.append(f"✓ Database: {total_images} total images, {with_thumbnails} have thumbnails")
+        
+        if sample_file:
+            file_id = sample_file[0]
+            results.append(f"✓ Sample file ID: {file_id}")
+            
+            # Test 5: Try to fetch one file's metadata
+            try:
+                file_metadata = service.files().get(
+                    fileId=file_id,
+                    fields="id,name,mimeType,thumbnailLink,trashed,parents,capabilities",
+                    supportsAllDrives=True
+                ).execute()
+                
+                results.append(f"✓ Sample file metadata retrieved:")
+                results.append(f"  - Name: {file_metadata.get('name', 'Unknown')}")
+                results.append(f"  - Type: {file_metadata.get('mimeType', 'Unknown')}")
+                results.append(f"  - Trashed: {file_metadata.get('trashed', 'Unknown')}")
+                results.append(f"  - Has thumbnail: {'thumbnailLink' in file_metadata}")
+                
+                if 'thumbnailLink' in file_metadata:
+                    thumb_url = file_metadata['thumbnailLink']
+                    results.append(f"  - Thumbnail URL: {thumb_url[:80]}...")
+                    results.append(f"  - URL valid: {is_valid_thumbnail(thumb_url)}")
+                else:
+                    results.append(f"  - No thumbnail available for this file type")
+                
+                # Check file capabilities
+                caps = file_metadata.get('capabilities', {})
+                results.append(f"  - Can read: {caps.get('canDownload', 'Unknown')}")
+                results.append(f"  - Can view: {caps.get('canReadRevisions', 'Unknown')}")
+                
+            except Exception as e:
+                results.append(f"✗ Error fetching sample file: {str(e)}")
+                
+                # If individual file fails, try a different approach
+                try:
+                    # Test with a simple files.list call
+                    list_result = service.files().list(
+                        pageSize=1,
+                        fields="files(id,name,mimeType)",
+                        supportsAllDrives=True,
+                        includeItemsFromAllDrives=True
+                    ).execute()
+                    
+                    if list_result.get('files'):
+                        results.append(f"✓ Files.list works - found accessible files")
+                        test_file = list_result['files'][0]
+                        results.append(f"  - Test file: {test_file.get('name')} ({test_file.get('id')})")
+                    else:
+                        results.append(f"✗ Files.list returned no results")
+                        
+                except Exception as e2:
+                    results.append(f"✗ Files.list also failed: {str(e2)}")
+        
+        # Test 6: Check quota
+        try:
+            quota_info = about.get('storageQuota', {})
+            if quota_info:
+                usage = quota_info.get('usage', 'Unknown')
+                limit = quota_info.get('limit', 'Unknown')
+                results.append(f"✓ Storage quota: {usage}/{limit} bytes used")
+        except:
+            results.append("? Could not retrieve quota information")
+        
+        # Test 7: Check OAuth scopes
+        try:
+            if hasattr(creds, 'scopes') and creds.scopes:
+                scopes_str = ', '.join(str(scope) for scope in creds.scopes)
+                results.append(f"✓ OAuth scopes: {scopes_str}")
+            else:
+                results.append("? OAuth scopes: Unknown or not available")
+        except Exception as e:
+            results.append(f"? OAuth scopes: Error reading scopes - {str(e)}")
+        
+        # Test 8: Check if credentials need refresh
+        if creds.expired:
+            results.append("⚠ Credentials are expired - attempting refresh...")
+            try:
+                creds.refresh(Request())
+                results.append("✓ Credentials refreshed successfully")
+                
+                # Update session
+                session["credentials"] = {
+                    "token": creds.token,
+                    "refresh_token": creds.refresh_token,
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "client_id": creds.client_id,
+                    "client_secret": creds.client_secret,
+                    "scopes": creds.scopes
+                }
+            except Exception as e:
+                results.append(f"✗ Credential refresh failed: {str(e)}")
+        else:
+            results.append("✓ Credentials are not expired")
+            
+    except Exception as e:
+        results.append(f"✗ Major error in diagnostics: {str(e)}")
+        import traceback
+        results.append(f"Traceback: {traceback.format_exc()}")
+    
+    return render_template("diagnostics.html", results=results)
+
+
+# Add this helper route for the template
+@app.route("/diagnostics/template")
+def diagnostics_template():
+    """Simple template for diagnostics if you don't have one"""
+    results = request.args.getlist('results')
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Diagnostics</title>
+        <style>
+            body { font-family: monospace; margin: 20px; }
+            .result { margin: 5px 0; padding: 5px; }
+            .success { color: green; }
+            .error { color: red; }
+            .warning { color: orange; }
+        </style>
+    </head>
+    <body>
+        <h1>System Diagnostics</h1>
+        <div id="results">
+    """
+    
+    for result in results:
+        css_class = "success" if result.startswith("✓") else ("error" if result.startswith("✗") else ("warning" if result.startswith("⚠") else ""))
+        html += f'<div class="result {css_class}">{result}</div>'
+    
+    html += """
+        </div>
+        <br>
+        <a href="/">← Back to Main</a>
+        <br><br>
+        <form method="POST" action="/refresh/thumbnails">
+            <input type="hidden" name="test_mode" value="true">
+            <button type="submit">Test Thumbnail Refresh (5 files only)</button>
+        </form>
+    </body>
+    </html>
+    """
+    
+    return html
 
 ### - Program Start - ###
 if __name__ == "__main__":
