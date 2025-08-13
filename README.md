@@ -408,13 +408,13 @@ All configuration constants are defined at the top of `main.py` for easy modific
 ### Recent Updates
 
 **Thumbnail System Overhaul:**
-Fixed thumbnail validation to accept current Google Drive URL formats
-Added comprehensive debugging and diagnostic tools
-Implemented batch thumbnail refresh with error recovery
-Enhanced thumbnail URL validation logic for better reliability
+- Fixed thumbnail validation to accept current Google Drive URL formats
+- Added comprehensive debugging and diagnostic tools
+- Implemented batch thumbnail refresh with error recovery
+- Enhanced thumbnail URL validation logic for better reliability
 
 **Debug and Diagnostics:**
-Added /diagnostics route for system health checks
-Implemented detailed error logging and reporting
-Added test modes for safe troubleshooting
-Enhanced batch processing with progress monitoring
+- Added /diagnostics route for system health checks
+- Implemented detailed error logging and reporting
+- Added test modes for safe troubleshooting
+- Enhanced batch processing with progress monitoring
