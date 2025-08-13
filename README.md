@@ -335,6 +335,11 @@ DigitalOcean App Platform has ephemeral storage by default. For persistent SQLit
 - Load previous backups to restore your data
 - Delete old backups to save space
 
+### Debug Tools (very bottom)
+- Refresh thumbnails that are potentially broken
+- Clear all thumbnails to test auto refresh functionality
+- Diagnose issues when editing the program locally
+
 ## Development
 
 ### Project Structure
@@ -402,17 +407,14 @@ All configuration constants are defined at the top of `main.py` for easy modific
 
 ### Recent Updates
 
-**Configuration Updates:**
-- Migrated from `credentials.json` file to environment variable-based OAuth configuration
-- Updated default port from 8080 to 3000 to match common development practices
-- Enhanced configuration with centralized constants and better error handling
+**Thumbnail System Overhaul:**
+Fixed thumbnail validation to accept current Google Drive URL formats
+Added comprehensive debugging and diagnostic tools
+Implemented batch thumbnail refresh with error recovery
+Enhanced thumbnail URL validation logic for better reliability
 
-**Environment Setup:**
-- Added `.env.example` template file for easy configuration
-- Support for both Poetry and pip installation methods
-- Improved virtual environment setup instructions for better dependency isolation
-
-**Code Quality:**
-- Added Ruff linting and Pyright type checking support
-- Enhanced error handling and user feedback
-- Improved code organization with clear constant definitions
+**Debug and Diagnostics:**
+Added /diagnostics route for system health checks
+Implemented detailed error logging and reporting
+Added test modes for safe troubleshooting
+Enhanced batch processing with progress monitoring
