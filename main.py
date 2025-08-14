@@ -413,13 +413,31 @@ def load_backup(backup_id, creds=None, try_refresh_missing=True):
     conn.close()
     return True
 
-def list_backups():
+def list_backups_safe():
+    """
+    Safe version of list_backups with proper error handling
+    """
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT id, timestamp FROM backups ORDER BY id DESC")
+        backups = c.fetchall()
+        return backups
+    except Exception as e:
+        print(f"Error in list_backups_safe: {e}")
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+def get_db_connection():
+    """
+    Helper function to get database connection with consistent configuration
+    """
     conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT id, timestamp FROM backups ORDER BY id DESC")
-    backups = c.fetchall()
-    conn.close()
-    return backups
+    conn.row_factory = sqlite3.Row
+    return conn
 
 def init_db():
     # Ensure data directory exists
@@ -449,114 +467,278 @@ def init_db():
     conn.commit()
     conn.close()
 
-
-def load_data(page=DEFAULT_PAGE, per_page=ITEMS_PER_PAGE):
-    offset = (page - 1) * per_page
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-
-    c.execute("""
-        SELECT id, tags, thumbnail
-        FROM images
-        ORDER BY id
-        LIMIT ? OFFSET ?
-    """, (per_page, offset))
-    rows = c.fetchall()
-
-    data = []
-    expired_files = {}
-
-    for file_id, tag_str, thumb in rows:
-        # Use the new expired check function - only refresh truly old/broken URLs
-        if not thumb or is_expired_thumbnail(thumb):
-            expired_files[file_id] = tag_str
-        else:
+def refresh_expired_thumbnails(expired_files, data):
+    """
+    Handle thumbnail refresh separately to avoid blocking main data load
+    """
+    if not expired_files or "credentials" not in session:
+        # Add expired files with default thumbnails
+        for file_id, tags in expired_files.items():
             data.append({
                 "id": file_id,
-                "tags": json.loads(tag_str),
-                "thumb_url": thumb
+                "tags": tags,
+                "thumb_url": DEFAULT_THUMBNAIL
             })
+        return
 
-    # Only attempt to refresh thumbnails if we have expired files AND credentials
-    if expired_files and "credentials" in session:
+    try:
         creds = Credentials(**session["credentials"])
         service = build("drive", GOOGLE_DRIVE_API_VERSION, credentials=creds)
         
-        # First, clear all expired thumbnails from database
+        # Use a separate connection for thumbnail updates
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        
+        # Clear expired thumbnails first
         expired_ids = list(expired_files.keys())
         placeholders = ','.join(['?' for _ in expired_ids])
         c.execute(f"UPDATE images SET thumbnail = NULL WHERE id IN ({placeholders})", expired_ids)
         conn.commit()
         
-        batch = BatchHttpRequest(batch_uri='https://www.googleapis.com/batch/drive/v3')
-        refreshed_thumbnails = {}
+        # Refresh thumbnails in smaller batches
+        batch_size = 10
+        refreshed_count = 0
+        
+        for i in range(0, len(expired_ids), batch_size):
+            batch_files = expired_ids[i:i + batch_size]
+            batch = BatchHttpRequest(batch_uri='https://www.googleapis.com/batch/drive/v3')
+            batch_results = {}
 
-        def callback(request_id, response, exception):
-            if exception:
-                print(f"Thumbnail fetch failed for {request_id}: {exception}")
-                refreshed_thumbnails[request_id] = DEFAULT_THUMBNAIL
-                return
-            
-            new_thumbnail = response.get("thumbnailLink")
-            if new_thumbnail and is_valid_thumbnail(new_thumbnail):
-                refreshed_thumbnails[request_id] = new_thumbnail
-            else:
-                refreshed_thumbnails[request_id] = DEFAULT_THUMBNAIL
+            def callback(request_id, response, exception):
+                if exception:
+                    batch_results[request_id] = DEFAULT_THUMBNAIL
+                    return
+                
+                new_thumbnail = response.get("thumbnailLink")
+                if new_thumbnail and is_valid_thumbnail(new_thumbnail):
+                    batch_results[request_id] = new_thumbnail
+                else:
+                    batch_results[request_id] = DEFAULT_THUMBNAIL
 
-        for file_id in expired_files.keys():
-            batch.add(
-                service.files().get(
-                    fileId=file_id,
-                    fields=DRIVE_THUMBNAIL_FIELDS,
-                    supportsAllDrives=True
-                ),
-                request_id=file_id,
-                callback=callback
-            )
+            # Add requests to batch
+            for file_id in batch_files:
+                batch.add(
+                    service.files().get(
+                        fileId=file_id,
+                        fields=DRIVE_THUMBNAIL_FIELDS,
+                        supportsAllDrives=True
+                    ),
+                    request_id=file_id,
+                    callback=callback
+                )
 
-        try:
-            batch.execute()  # Execute the batch request
-            
-            # After batch finishes, update DB with completely new thumbnails
-            for file_id, tag_str in expired_files.items():
-                new_thumb_url = refreshed_thumbnails.get(file_id, DEFAULT_THUMBNAIL)
+            try:
+                batch.execute()
                 
-                # Add the item to data with refreshed thumbnail
-                data.append({
-                    "id": file_id,
-                    "tags": json.loads(tag_str),
-                    "thumb_url": new_thumb_url
-                })
-                
-                # Update the database with the completely new thumbnail
-                c.execute("UPDATE images SET thumbnail = ? WHERE id = ?", (new_thumb_url, file_id))
-                
-        except Exception as e:
-            print(f"Batch execution failed: {e}")
-            # Fallback: add expired files with default thumbnail and clear DB thumbnails
-            for file_id, tag_str in expired_files.items():
-                data.append({
-                    "id": file_id,
-                    "tags": json.loads(tag_str),
-                    "thumb_url": DEFAULT_THUMBNAIL
-                })
-                # Set to DEFAULT_THUMBNAIL instead of leaving null
-                c.execute("UPDATE images SET thumbnail = ? WHERE id = ?", (DEFAULT_THUMBNAIL, file_id))
-    else:
-        # If no credentials or no expired files, add expired files with default thumbnail
-        for file_id, tag_str in expired_files.items():
+                # Update database and add to data
+                for file_id in batch_files:
+                    new_thumb_url = batch_results.get(file_id, DEFAULT_THUMBNAIL)
+                    tags = expired_files[file_id]
+                    
+                    # Add to data
+                    data.append({
+                        "id": file_id,
+                        "tags": tags,
+                        "thumb_url": new_thumb_url
+                    })
+                    
+                    # Update database
+                    c.execute("UPDATE images SET thumbnail = ? WHERE id = ?", (new_thumb_url, file_id))
+                    refreshed_count += 1
+                    
+            except Exception as batch_error:
+                print(f"Batch thumbnail refresh failed: {batch_error}")
+                # Fallback: add with default thumbnails
+                for file_id in batch_files:
+                    tags = expired_files[file_id]
+                    data.append({
+                        "id": file_id,
+                        "tags": tags,
+                        "thumb_url": DEFAULT_THUMBNAIL
+                    })
+                    c.execute("UPDATE images SET thumbnail = ? WHERE id = ?", (DEFAULT_THUMBNAIL, file_id))
+        
+        conn.commit()
+        conn.close()
+        print(f"Refreshed {refreshed_count} thumbnails")
+        
+    except Exception as e:
+        print(f"Error refreshing thumbnails: {e}")
+        # Fallback: add all expired files with default thumbnails
+        for file_id, tags in expired_files.items():
             data.append({
                 "id": file_id,
-                "tags": json.loads(tag_str),
+                "tags": tags,
                 "thumb_url": DEFAULT_THUMBNAIL
             })
-            # Clear the expired thumbnail from database
-            c.execute("UPDATE images SET thumbnail = ? WHERE id = ?", (DEFAULT_THUMBNAIL, file_id))
 
-    conn.commit()
-    conn.close()
+def load_data_safe(page=DEFAULT_PAGE, per_page=ITEMS_PER_PAGE):
+    """
+    Safe version of load_data with better error handling and connection management
+    """
+    offset = (page - 1) * per_page
+    conn = None
+    
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        conn.row_factory = sqlite3.Row  # Enable column access by name
+        c = conn.cursor()
 
-    return data
+        c.execute("""
+            SELECT id, tags, thumbnail
+            FROM images
+            ORDER BY id
+            LIMIT ? OFFSET ?
+        """, (per_page, offset))
+        rows = c.fetchall()
+
+        data = []
+        expired_files = {}
+
+        for row in rows:
+            file_id = row['id']
+            tag_str = row['tags']
+            thumb = row['thumbnail']
+            
+            try:
+                # Parse tags safely
+                tags = json.loads(tag_str) if tag_str else []
+            except (json.JSONDecodeError, TypeError):
+                print(f"Warning: Invalid JSON tags for file {file_id}")
+                tags = []
+
+            # Check thumbnail validity
+            if not thumb or is_expired_thumbnail(thumb):
+                expired_files[file_id] = tags
+            else:
+                data.append({
+                    "id": file_id,
+                    "tags": tags,
+                    "thumb_url": thumb
+                })
+
+        # Handle expired thumbnails in a separate transaction to avoid blocking
+        if expired_files:
+            refresh_expired_thumbnails(expired_files, data)
+
+        return data
+        
+    except Exception as e:
+        print(f"Error in load_data_safe: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+# def load_data(page=DEFAULT_PAGE, per_page=ITEMS_PER_PAGE):
+#     offset = (page - 1) * per_page
+#     conn = sqlite3.connect(DB_FILE)
+#     c = conn.cursor()
+
+#     c.execute("""
+#         SELECT id, tags, thumbnail
+#         FROM images
+#         ORDER BY id
+#         LIMIT ? OFFSET ?
+#     """, (per_page, offset))
+#     rows = c.fetchall()
+
+#     data = []
+#     expired_files = {}
+
+#     for file_id, tag_str, thumb in rows:
+#         # Use the new expired check function - only refresh truly old/broken URLs
+#         if not thumb or is_expired_thumbnail(thumb):
+#             expired_files[file_id] = tag_str
+#         else:
+#             data.append({
+#                 "id": file_id,
+#                 "tags": json.loads(tag_str),
+#                 "thumb_url": thumb
+#             })
+
+#     # Only attempt to refresh thumbnails if we have expired files AND credentials
+#     if expired_files and "credentials" in session:
+#         creds = Credentials(**session["credentials"])
+#         service = build("drive", GOOGLE_DRIVE_API_VERSION, credentials=creds)
+        
+#         # First, clear all expired thumbnails from database
+#         expired_ids = list(expired_files.keys())
+#         placeholders = ','.join(['?' for _ in expired_ids])
+#         c.execute(f"UPDATE images SET thumbnail = NULL WHERE id IN ({placeholders})", expired_ids)
+#         conn.commit()
+        
+#         batch = BatchHttpRequest(batch_uri='https://www.googleapis.com/batch/drive/v3')
+#         refreshed_thumbnails = {}
+
+#         def callback(request_id, response, exception):
+#             if exception:
+#                 print(f"Thumbnail fetch failed for {request_id}: {exception}")
+#                 refreshed_thumbnails[request_id] = DEFAULT_THUMBNAIL
+#                 return
+            
+#             new_thumbnail = response.get("thumbnailLink")
+#             if new_thumbnail and is_valid_thumbnail(new_thumbnail):
+#                 refreshed_thumbnails[request_id] = new_thumbnail
+#             else:
+#                 refreshed_thumbnails[request_id] = DEFAULT_THUMBNAIL
+
+#         for file_id in expired_files.keys():
+#             batch.add(
+#                 service.files().get(
+#                     fileId=file_id,
+#                     fields=DRIVE_THUMBNAIL_FIELDS,
+#                     supportsAllDrives=True
+#                 ),
+#                 request_id=file_id,
+#                 callback=callback
+#             )
+
+#         try:
+#             batch.execute()  # Execute the batch request
+            
+#             # After batch finishes, update DB with completely new thumbnails
+#             for file_id, tag_str in expired_files.items():
+#                 new_thumb_url = refreshed_thumbnails.get(file_id, DEFAULT_THUMBNAIL)
+                
+#                 # Add the item to data with refreshed thumbnail
+#                 data.append({
+#                     "id": file_id,
+#                     "tags": json.loads(tag_str),
+#                     "thumb_url": new_thumb_url
+#                 })
+                
+#                 # Update the database with the completely new thumbnail
+#                 c.execute("UPDATE images SET thumbnail = ? WHERE id = ?", (new_thumb_url, file_id))
+                
+#         except Exception as e:
+#             print(f"Batch execution failed: {e}")
+#             # Fallback: add expired files with default thumbnail and clear DB thumbnails
+#             for file_id, tag_str in expired_files.items():
+#                 data.append({
+#                     "id": file_id,
+#                     "tags": json.loads(tag_str),
+#                     "thumb_url": DEFAULT_THUMBNAIL
+#                 })
+#                 # Set to DEFAULT_THUMBNAIL instead of leaving null
+#                 c.execute("UPDATE images SET thumbnail = ? WHERE id = ?", (DEFAULT_THUMBNAIL, file_id))
+#     else:
+#         # If no credentials or no expired files, add expired files with default thumbnail
+#         for file_id, tag_str in expired_files.items():
+#             data.append({
+#                 "id": file_id,
+#                 "tags": json.loads(tag_str),
+#                 "thumb_url": DEFAULT_THUMBNAIL
+#             })
+#             # Clear the expired thumbnail from database
+#             c.execute("UPDATE images SET thumbnail = ? WHERE id = ?", (DEFAULT_THUMBNAIL, file_id))
+
+#     conn.commit()
+#     conn.close()
+
+#     return data
 
 # def load_data(page=DEFAULT_PAGE, per_page=ITEMS_PER_PAGE):
 #     offset = (page - 1) * per_page
@@ -586,32 +768,45 @@ def load_data(page=DEFAULT_PAGE, per_page=ITEMS_PER_PAGE):
 
 
 def save_item(item_id, tags):
-    # Attempt to get thumbnailLink from Google Drive (once per image)
-    thumb = None
-    if "credentials" in session:
-        creds = Credentials(**session["credentials"])
-        service = build("drive", GOOGLE_DRIVE_API_VERSION, credentials=creds)
-        try:
-            meta = service.files().get(
-                fileId=item_id,
-                fields=DRIVE_THUMBNAIL_FIELDS,
-                supportsAllDrives=True
-            ).execute()
-            thumb = meta.get("thumbnailLink")
-        except Exception as e:
-            print(f"Thumbnail fetch failed for {item_id}: {e}")
+    """
+    Updated save_item with better connection handling
+    """
+    conn = None
+    try:
+        # Attempt to get thumbnail from Google Drive (once per image)
+        thumb = None
+        if "credentials" in session:
+            try:
+                creds = Credentials(**session["credentials"])
+                service = build("drive", GOOGLE_DRIVE_API_VERSION, credentials=creds)
+                meta = service.files().get(
+                    fileId=item_id,
+                    fields=DRIVE_THUMBNAIL_FIELDS,
+                    supportsAllDrives=True
+                ).execute()
+                thumb = meta.get("thumbnailLink")
+            except Exception as e:
+                print(f"Thumbnail fetch failed for {item_id}: {e}")
+                thumb = None
 
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
 
-    tags_json = json.dumps(tags)
-    c.execute("""
-        INSERT OR REPLACE INTO images (id, tags, thumbnail)
-        VALUES (?, ?, ?)
-    """, (item_id, tags_json, thumb))
+        tags_json = json.dumps(tags)
+        c.execute("""
+            INSERT OR REPLACE INTO images (id, tags, thumbnail)
+            VALUES (?, ?, ?)
+        """, (item_id, tags_json, thumb))
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+        
+    except Exception as e:
+        print(f"Error saving item {item_id}: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            conn.close()
 
 
 def delete_item(item_id):
@@ -781,7 +976,6 @@ def get_thumbnail_url(file_id, creds):
 ### - Main Route - ###
 @app.route("/", methods=["GET", "POST"])
 def index():
-
     if "credentials" not in session:
         print("No credentials found in session, redirecting to authorize.")
         return redirect("/authorize")
@@ -794,41 +988,25 @@ def index():
     if email not in ALLOWED_USERS:
         return abort(403, description="You are not authorized to access this application.")
 
-    page = int(request.args.get("page", DEFAULT_PAGE))
-    per_page = ITEMS_PER_PAGE
-    data = load_data(page=page, per_page=per_page)
-
-    # Unique tags
-    all_tags_set = set()
-    for item in data:
-        all_tags_set.update(item["tags"])
-    all_tags = sorted(all_tags_set)
-
-    # Search filtering (after load, before display)
-    search_query = request.args.get("q", "").strip().lower()
-    if search_query:
-        terms = [q.strip() for q in search_query.split(",") if q.strip()]
-        def matches_all(item):
-            return all(
-                term in item["id"].lower() or any(term in t for t in item["tags"])
-                for term in terms
-            )
-        data = [item for item in data if matches_all(item)]
-
-    # Handle POST: tagging or adding images
+    # Handle POST requests first (before loading data)
     if request.method == "POST":
         photo_id = request.form.get("photo_id")
         new_tag = request.form.get("tag", "").strip().lower()
 
         if photo_id and new_tag:
             tags_to_add = [t.strip() for t in new_tag.split(",") if t.strip()]
-            for item in data:
-                if item["id"] == photo_id:
-                    for tag in tags_to_add:
-                        if tag not in item["tags"]:
-                            item["tags"].append(tag)
-                    save_item(photo_id, item["tags"])
-                    break
+            # Load current item data for this specific photo
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("SELECT tags FROM images WHERE id = ?", (photo_id,))
+            row = c.fetchone()
+            if row:
+                current_tags = json.loads(row[0])
+                for tag in tags_to_add:
+                    if tag not in current_tags:
+                        current_tags.append(tag)
+                save_item(photo_id, current_tags)
+            conn.close()
             return redirect("/")
 
         # Handle new uploads
@@ -846,37 +1024,91 @@ def index():
 
             if match_file:
                 file_id = match_file.group(1)
-                exists = next((item for item in data if item["id"] == file_id), None)
-                if exists:
+                # Check if exists in database
+                conn = sqlite3.connect(DB_FILE)
+                c = conn.cursor()
+                c.execute("SELECT tags FROM images WHERE id = ?", (file_id,))
+                row = c.fetchone()
+                if row:
+                    existing_tags = json.loads(row[0])
                     for tag in tag_list:
-                        if tag not in exists["tags"]:
-                            exists["tags"].append(tag)
-                    save_item(file_id, exists["tags"])
+                        if tag not in existing_tags:
+                            existing_tags.append(tag)
+                    save_item(file_id, existing_tags)
                 else:
                     save_item(file_id, tag_list)
+                conn.close()
 
             elif match_folder:
                 folder_id = match_folder.group(1)
                 image_ids = list_images_in_folder(folder_id, creds)
                 for file_id in image_ids:
-                    exists = next((item for item in data if item["id"] == file_id), None)
-                    if exists:
+                    conn = sqlite3.connect(DB_FILE)
+                    c = conn.cursor()
+                    c.execute("SELECT tags FROM images WHERE id = ?", (file_id,))
+                    row = c.fetchone()
+                    if row:
+                        existing_tags = json.loads(row[0])
                         for tag in tag_list:
-                            if tag not in exists["tags"]:
-                                exists["tags"].append(tag)
-                        save_item(file_id, exists["tags"])
+                            if tag not in existing_tags:
+                                existing_tags.append(tag)
+                        save_item(file_id, existing_tags)
                     else:
                         save_item(file_id, tag_list)
+                    conn.close()
 
         return redirect("/")
 
-    # Get total count for pagination
-    conn = sqlite3.connect(DB_FILE)
-    total_items = conn.execute("SELECT COUNT(*) FROM images").fetchone()[0]
-    conn.close()
-    total_pages = (total_items + per_page - 1) // per_page
+    # GET request handling - Load data with proper error handling
+    page = int(request.args.get("page", DEFAULT_PAGE))
+    per_page = ITEMS_PER_PAGE
+    
+    # Load photos with error handling
+    data = []
+    try:
+        data = load_data_safe(page=page, per_page=per_page)
+    except Exception as e:
+        print(f"Error loading photos: {e}")
+        flash("Error loading photos. Please refresh the page.", FLASH_WARNING)
+        data = []
 
-    backups = list_backups()
+    # Load backups independently with error handling
+    backups = []
+    try:
+        backups = list_backups_safe()
+    except Exception as e:
+        print(f"Error loading backups: {e}")
+        flash("Error loading backups list.", FLASH_WARNING)
+        backups = []
+
+    # Calculate unique tags from successfully loaded data
+    all_tags_set = set()
+    for item in data:
+        all_tags_set.update(item["tags"])
+    all_tags = sorted(all_tags_set)
+
+    # Search filtering (after load, before display)
+    search_query = request.args.get("q", "").strip().lower()
+    if search_query:
+        terms = [q.strip() for q in search_query.split(",") if q.strip()]
+        def matches_all(item):
+            return all(
+                term in item["id"].lower() or any(term in t for t in item["tags"])
+                for term in terms
+            )
+        data = [item for item in data if matches_all(item)]
+
+    # Get total count for pagination (with error handling)
+    total_items = 0
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        total_items = conn.execute("SELECT COUNT(*) FROM images").fetchone()[0]
+        conn.close()
+    except Exception as e:
+        print(f"Error getting total count: {e}")
+        total_items = len(data)  # Fallback to current page count
+    
+    total_pages = max(1, (total_items + per_page - 1) // per_page)
 
     return render_template("index.html",
         data=data,
@@ -895,7 +1127,7 @@ def removetag():
     tag = request.form["tag"]
 
     # Loads the current data from the database to update it.
-    data = load_data()
+    data = load_data_safe()
 
     # Looks for the specific image and removes the specified tag if present.
     for item in data:
@@ -1346,7 +1578,6 @@ def diagnostics():
     return render_template("diagnostics.html", results=results)
 
 
-# Add this helper route for the template
 @app.route("/diagnostics/template")
 def diagnostics_template():
     """Simple template for diagnostics if you don't have one"""
