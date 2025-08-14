@@ -317,8 +317,8 @@ DigitalOcean App Platform has ephemeral storage by default. For persistent SQLit
 
 ### Adding Photos
 - Paste Google Drive file or folder URLs in the upload form
-- Add comma-separated tags
-- The app will process folders recursively and extract all image files
+- Add both comma-separated tags and photos
+- The app will process folders recursively and obtain all thumbnail links
 
 ### Managing Tags
 - Click on any tag to remove it from a photo
@@ -336,8 +336,8 @@ DigitalOcean App Platform has ephemeral storage by default. For persistent SQLit
 - Delete old backups to save space
 
 ### Debug Tools (very bottom)
-- Refresh thumbnails that are potentially broken
-- Clear all thumbnails to test auto refresh functionality
+- "Refresh All Thumbnails" for thumbnails that are potentially expired
+- "Clear All Thumbnails" to test auto refresh functionality
 - Diagnose issues when editing the program locally
 
 ## Development
@@ -378,6 +378,7 @@ All configuration constants are defined at the top of `main.py` for easy modific
 ### Common Issues
 
 - **500 Internal Server Error**: Usually caused by OAuth configuration issues
+  - Try clearing your cookies and site data on the left of the address bar
   - Check that your `.env` file exists and contains all required variables
   - Ensure the redirect URI matches exactly in your Google Cloud Console OAuth2 credentials
   - Verify your Google OAuth credentials are correct
@@ -397,6 +398,8 @@ All configuration constants are defined at the top of `main.py` for easy modific
   ```
 
 - **Missing thumbnails**: Some Google Drive files may not have thumbnail support
+  - Press "Refresh All Thumbnails" to potentially fix it
+  - You may not have access to the images or are not logged into the correct account
   - This is normal for certain file types or very large images
 
 - **Database issues**: Delete `data/data.db` to reset (you'll lose all data)
