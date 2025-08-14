@@ -79,7 +79,7 @@ OAUTH_SCOPES = [
 ]
 
 # Server Configuration
-SERVER_HOST = "localhost"
+SERVER_HOST = "https://photo-tagger-app-npbtz.ondigitalocean.app/"
 SERVER_PORT = int(os.getenv("PORT", 3000))
 
 print(f"[Server Configuration] Running on {SERVER_HOST}:{SERVER_PORT}") 
