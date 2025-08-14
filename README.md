@@ -317,8 +317,8 @@ DigitalOcean App Platform has ephemeral storage by default. For persistent SQLit
 
 ### Adding Photos
 - Paste Google Drive file or folder URLs in the upload form
-- Add comma-separated tags
-- The app will process folders recursively and extract all image files
+- Add both comma-separated tags and photos
+- The app will process folders recursively and obtain all thumbnail links
 
 ### Managing Tags
 - Click on any tag to remove it from a photo
@@ -334,6 +334,11 @@ DigitalOcean App Platform has ephemeral storage by default. For persistent SQLit
 - Create backups with custom names or automatic timestamps
 - Load previous backups to restore your data
 - Delete old backups to save space
+
+### Debug Tools (very bottom)
+- "Refresh All Thumbnails" for thumbnails that are potentially expired
+- "Clear All Thumbnails" to test auto refresh functionality
+- Diagnose issues when editing the program locally
 
 ## Development
 
@@ -373,6 +378,7 @@ All configuration constants are defined at the top of `main.py` for easy modific
 ### Common Issues
 
 - **500 Internal Server Error**: Usually caused by OAuth configuration issues
+  - Try clearing your cookies and site data on the left of the address bar
   - Check that your `.env` file exists and contains all required variables
   - Ensure the redirect URI matches exactly in your Google Cloud Console OAuth2 credentials
   - Verify your Google OAuth credentials are correct
@@ -392,6 +398,8 @@ All configuration constants are defined at the top of `main.py` for easy modific
   ```
 
 - **Missing thumbnails**: Some Google Drive files may not have thumbnail support
+  - Press "Refresh All Thumbnails" to potentially fix it
+  - You may not have access to the images or are not logged into the correct account
   - This is normal for certain file types or very large images
 
 - **Database issues**: Delete `data/data.db` to reset (you'll lose all data)
@@ -402,17 +410,14 @@ All configuration constants are defined at the top of `main.py` for easy modific
 
 ### Recent Updates
 
-**Configuration Updates:**
-- Migrated from `credentials.json` file to environment variable-based OAuth configuration
-- Updated default port from 8080 to 3000 to match common development practices
-- Enhanced configuration with centralized constants and better error handling
+**Thumbnail System Overhaul:**
+- Fixed thumbnail validation to accept current Google Drive URL formats
+- Added comprehensive debugging and diagnostic tools
+- Implemented batch thumbnail refresh with error recovery
+- Enhanced thumbnail URL validation logic for better reliability
 
-**Environment Setup:**
-- Added `.env.example` template file for easy configuration
-- Support for both Poetry and pip installation methods
-- Improved virtual environment setup instructions for better dependency isolation
-
-**Code Quality:**
-- Added Ruff linting and Pyright type checking support
-- Enhanced error handling and user feedback
-- Improved code organization with clear constant definitions
+**Debug and Diagnostics:**
+- Added /diagnostics route for system health checks
+- Implemented detailed error logging and reporting
+- Added test modes for safe troubleshooting
+- Enhanced batch processing with progress monitoring
