@@ -30,173 +30,17 @@
       },
       MESSAGES: {
         DELETE_ALL_CONFIRM: 'Are you sure you want to delete ALL photos and their tags? This cannot be undone.',
-        NO_PHOTOS: 'No photos found. Refresh the page if not displaying correctly.',
-        NO_BACKUPS: 'No backups found. Refresh the page if not displaying correctly.',
-        DELETE_BACKUP_CONFIRM: 'Delete this backup permanently?',
-        REFRESH_ALL_THUMBNAILS_CONFIRM: 'This will refresh ALL thumbnails. Continue?',
-        CLEAR_ALL_THUMBNAILS_CONFIRM: 'This will clear all thumbnails. Continue?'
+        NO_PHOTOS: 'No photos found.',
+        NO_BACKUPS: 'No backups found'
       },
       PLACEHOLDERS: {
         SEARCH: 'Search tags or photo IDs (comma separated)',
         UPLOAD_LINK: 'Google Drive file or folder links (comma separated)',
         UPLOAD_TAGS: 'Tags (comma separated)',
         NEW_TAG: 'New Tag',
-        RENAME_TAG: 'New name',
-        BACKUP_NAME: 'Backup name (optional)',
-        CHOOSE_TAG: 'Choose tag…'
-      },
-      LABELS: {
-        PAGE_TITLE: 'Photo Tagger',
-        SEARCH_SECTION: 'Search',
-        RENAME_TAG_SECTION: 'Rename Tag',
-        UPLOAD_SECTION: 'Upload Photos + Tags',
-        BACKUPS_SECTION: 'Backups',
-        DEBUG_SECTION: 'Debug Tools',
-        AVAILABLE_TAGS: 'Available tags to search:',
-        CLEAR_SEARCH: 'Clear Search',
-        SEARCHING_FOR: 'Searching for:',
-        ID_LABEL: 'ID:',
-        TAGS_LABEL: 'Tags:',
-        VIEW_ON_DRIVE: 'View on Drive',
-        PREVIOUS_PAGE: 'Previous',
-        NEXT_PAGE: 'Next',
-        SHOWING_PAGE: 'Showing page',
-        OF_PAGES: 'of',
-        FILTERED_RESULTS: 'of filtered results'
-      },
-      BUTTONS: {
-        RENAME: 'Rename',
-        ADD_PHOTOS: 'Add Photos',
-        ADD_TAG: 'Add',
-        REMOVE_PHOTO: 'Remove Photo',
-        LOAD_BACKUP: 'Load',
-        REFRESH_THUMBS: 'Refresh Thumbs',
-        DELETE_BACKUP: 'Delete',
-        SAVE_BACKUP: 'Save Backup',
-        DELETE_ALL: 'Delete All Photos',
-        RUN_DIAGNOSTICS: 'Run Diagnostics',
-        TEST_REFRESH: 'Test Refresh (5 files)',
-        TEST_SINGLE: 'Test Single File',
-        REFRESH_ALL: 'Refresh All Thumbnails',
-        CLEAR_ALL: 'Clear All Thumbnails'
-      },
-      TOOLTIPS: {
-        LOAD_BACKUP: 'Load backup and attempt to refresh thumbnails',
-        REFRESH_THUMBS: 'Force refresh thumbnails for this backup'
+        RENAME_TAG: 'New name'
       }
     };
-
-    // Helper function to apply configuration after DOM loads
-    document.addEventListener('DOMContentLoaded', function() {
-      // Apply grid classes
-      const photoGrid = document.querySelector('.row.row-cols-2');
-      if (photoGrid) {
-        photoGrid.className = `row row-cols-${CONFIG.GRID.COLS_SMALL} row-cols-md-${CONFIG.GRID.COLS_MEDIUM} row-cols-xl-${CONFIG.GRID.COLS_LARGE} g-${CONFIG.UI.CARD_SPACING}`;
-      }
-
-      // Apply button sizes
-      document.querySelectorAll('.tag-btn').forEach(btn => {
-        btn.classList.add(CONFIG.UI.BUTTON_SIZES.TAG);
-      });
-
-      document.querySelectorAll('.remove-photo-form button').forEach(btn => {
-        btn.classList.add(CONFIG.UI.BUTTON_SIZES.REMOVE);
-      });
-
-      // Set placeholders
-      const searchInput = document.querySelector('input[name="q"]');
-      if (searchInput) searchInput.placeholder = CONFIG.PLACEHOLDERS.SEARCH;
-
-      const linkInput = document.querySelector('input[name="link"]');
-      if (linkInput) linkInput.placeholder = CONFIG.PLACEHOLDERS.UPLOAD_LINK;
-
-      const tagInput = document.querySelector('.upload-form input[name="tag"]');
-      if (tagInput) tagInput.placeholder = CONFIG.PLACEHOLDERS.UPLOAD_TAGS;
-
-      const newTagInput = document.querySelector('input[name="new_tag"]');
-      if (newTagInput) newTagInput.placeholder = CONFIG.PLACEHOLDERS.RENAME_TAG;
-
-      const backupNameInput = document.querySelector('input[name="backup_name"]');
-      if (backupNameInput) backupNameInput.placeholder = CONFIG.PLACEHOLDERS.BACKUP_NAME;
-
-      const chooseTagSelect = document.querySelector('select[name="old_tag"] option[disabled]');
-      if (chooseTagSelect) chooseTagSelect.textContent = CONFIG.PLACEHOLDERS.CHOOSE_TAG;
-
-      document.querySelectorAll('.add-tag-form input[name="tag"]').forEach(input => {
-        input.placeholder = CONFIG.PLACEHOLDERS.NEW_TAG;
-      });
-
-      // Set labels and text content
-      document.querySelector('h1').textContent = CONFIG.LABELS.PAGE_TITLE;
-      
-      const sections = document.querySelectorAll('section h3, section h4');
-      if (sections[0]) sections[0].textContent = CONFIG.LABELS.SEARCH_SECTION;
-      if (sections[1]) sections[1].textContent = CONFIG.LABELS.RENAME_TAG_SECTION;
-      if (sections[2]) sections[2].textContent = CONFIG.LABELS.UPLOAD_SECTION;
-      if (sections[3]) sections[3].textContent = CONFIG.LABELS.BACKUPS_SECTION;
-
-      const debugSection = document.querySelector('.debug-controls h4');
-      if (debugSection) debugSection.textContent = CONFIG.LABELS.DEBUG_SECTION;
-
-      // Set button text
-      const renameBtn = document.querySelector('.rename-form button[type="submit"]');
-      if (renameBtn) renameBtn.textContent = CONFIG.BUTTONS.RENAME;
-
-      const addPhotosBtn = document.querySelector('.upload-form button');
-      if (addPhotosBtn) addPhotosBtn.textContent = CONFIG.BUTTONS.ADD_PHOTOS;
-
-      const saveBackupBtn = document.querySelector('button[type="submit"].btn-warning');
-      if (saveBackupBtn) saveBackupBtn.textContent = CONFIG.BUTTONS.SAVE_BACKUP;
-
-      const deleteAllBtn = document.querySelector('.btn-danger.mb-3');
-      if (deleteAllBtn) deleteAllBtn.textContent = CONFIG.BUTTONS.DELETE_ALL;
-
-      document.querySelectorAll('.add-tag-form button[type="submit"]').forEach(btn => {
-        btn.textContent = CONFIG.BUTTONS.ADD_TAG;
-      });
-
-      document.querySelectorAll('.remove-photo-form button').forEach(btn => {
-        btn.textContent = CONFIG.BUTTONS.REMOVE_PHOTO;
-      });
-
-      // Debug buttons
-      const debugButtons = document.querySelectorAll('.debug-controls button');
-      if (debugButtons[0]) debugButtons[0].textContent = CONFIG.BUTTONS.RUN_DIAGNOSTICS;
-      if (debugButtons[1]) debugButtons[1].textContent = CONFIG.BUTTONS.TEST_REFRESH;
-      if (debugButtons[2]) debugButtons[2].textContent = CONFIG.BUTTONS.TEST_SINGLE;
-      if (debugButtons[3]) debugButtons[3].textContent = CONFIG.BUTTONS.REFRESH_ALL;
-      if (debugButtons[4]) debugButtons[4].textContent = CONFIG.BUTTONS.CLEAR_ALL;
-
-      // Set onclick confirmations
-      const deleteAllForm = document.querySelector('form[action="/delete/all"]');
-      if (deleteAllForm) {
-        deleteAllForm.onsubmit = () => confirm(CONFIG.MESSAGES.DELETE_ALL_CONFIRM);
-      }
-
-      const refreshAllBtn = document.querySelector('button[onclick*="refresh ALL thumbnails"]');
-      if (refreshAllBtn) {
-        refreshAllBtn.onclick = () => confirm(CONFIG.MESSAGES.REFRESH_ALL_THUMBNAILS_CONFIRM);
-      }
-
-      const clearAllBtn = document.querySelector('button[onclick*="clear all thumbnails"]');
-      if (clearAllBtn) {
-        clearAllBtn.onclick = () => confirm(CONFIG.MESSAGES.CLEAR_ALL_THUMBNAILS_CONFIRM);
-      }
-
-      // Set tooltips
-      document.querySelectorAll('button[title*="Load backup"]').forEach(btn => {
-        btn.title = CONFIG.TOOLTIPS.LOAD_BACKUP;
-      });
-
-      document.querySelectorAll('button[title*="Force refresh"]').forEach(btn => {
-        btn.title = CONFIG.TOOLTIPS.REFRESH_THUMBS;
-      });
-
-      // Replace delete backup confirmations
-      document.querySelectorAll('button[onclick*="Delete this backup"]').forEach(btn => {
-        btn.onclick = () => confirm(CONFIG.MESSAGES.DELETE_BACKUP_CONFIRM);
-      });
-    });
   </script>
 </head>
 <body class="p-4">
@@ -233,14 +77,6 @@
         {% for tag in all_tags %}
           <a href="/?q={{ tag }}" class="btn btn-sm btn-outline-secondary m-1">{{ tag }}</a>
         {% endfor %}
-      </div>
-    {% endif %}
-    
-    <!-- Clear search button when searching -->
-    {% if request.args.get('q') %}
-      <div class="mt-2">
-        <a href="/" class="btn btn-sm btn-outline-primary">Clear Search</a>
-        <span class="text-muted ms-2">Searching for: <strong>{{ request.args.get('q') }}</strong></span>
       </div>
     {% endif %}
   </section>
@@ -297,13 +133,10 @@
           Backup {{ b[0] }} - {{ b[1] }}
           <div class="btn-group" role="group">
             <form method="post" action="/backup/load/{{ b[0] }}" class="m-0 p-0">
-              <button type="submit" class="btn btn-sm btn-primary" title="Load backup and attempt to refresh thumbnails">Load</button>
-            </form>
-            <form method="post" action="/backup/refresh/{{ b[0] }}" class="m-0 p-0 ms-1">
-              <button type="submit" class="btn btn-sm btn-info" title="Force refresh thumbnails for this backup">Refresh Thumbs</button>
+              <button type="submit" class="btn btn-sm btn-primary">Load</button>
             </form>
             <form method="post" action="/backup/delete/{{ b[0] }}" class="m-0 p-0 ms-1">
-              <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Delete this backup permanently?')">Delete</button>
+              <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
             </form>
           </div>
         </li>
@@ -311,6 +144,7 @@
         <li class="list-group-item">No backups found</li>
       {% endfor %}
     </ul>
+
 
     <!-- Backup Name Input -->
     <form method="post" action="/backup/save" class="mb-3">
@@ -344,23 +178,12 @@
             />
             <form method="post" action="/removephoto" class="mb-2 remove-photo-form">
               <input type="hidden" name="id" value="{{ item.id }}" />
-              <!-- Preserve search and page parameters -->
-              {% if request.args.get('q') %}
-                <input type="hidden" name="return_url" value="/?q={{ request.args.get('q') | urlencode }}&page={{ page }}">
-              {% else %}
-                <input type="hidden" name="return_url" value="/?page={{ page }}">
-              {% endif %}
               <button class="btn btn-sm btn-outline-danger w-100">Remove Photo</button>
             </form>
             <div class="card-body p-3 d-flex flex-column">
               <p class="mb-1 text-truncate"><strong>ID:</strong> {{ item.id }}</p>
               <p class="mb-2">
-                <script>
-                  document.write(`<a href="${CONFIG.URLS.DRIVE_VIEW_BASE}{{ item.id }}${CONFIG.URLS.DRIVE_VIEW_SUFFIX}" target="_blank" rel="noopener noreferrer">View on Drive</a>`);
-                </script>
-                <noscript>
-                  <a href="https://drive.google.com/file/d/{{ item.id }}/view" target="_blank" rel="noopener noreferrer">View on Drive</a>
-                </noscript>
+                <a href="https://drive.google.com/file/d/{{ item.id }}/view" target="_blank" rel="noopener noreferrer">View on Drive</a>
               </p>
               <p class="mb-1"><strong>Tags:</strong></p>
               <div class="tags-list mb-2">
@@ -368,12 +191,6 @@
                   <form method="post" action="/removetag" class="d-inline-block me-1 mb-1">
                     <input type="hidden" name="id" value="{{ item.id }}" />
                     <input type="hidden" name="tag" value="{{ tag }}" />
-                    <!-- Preserve search and page parameters -->
-                    {% if request.args.get('q') %}
-                      <input type="hidden" name="return_url" value="/?q={{ request.args.get('q') | urlencode }}&page={{ page }}">
-                    {% else %}
-                      <input type="hidden" name="return_url" value="/?page={{ page }}">
-                    {% endif %}
                     <button class="btn btn-sm btn-outline-danger tag-btn">{{ tag }} ✕</button>
                   </form>
                 {% endfor %}
@@ -392,77 +209,42 @@
           </div>
         </div>
       {% else %}
-        <p><script>document.write(CONFIG.MESSAGES.NO_PHOTOS);</script><noscript>No photos found.</noscript></p>
+        <p>No photos found.</p>
       {% endfor %}
     </div>
   </section>
 
   <!-- Pagination -->
-  {% if total_pages > 1 %}
-    <nav aria-label="Page navigation" class="mt-5">
-      <ul class="pagination justify-content-center">
-        {% set search_param = '&q=' + request.args.get('q', '') if request.args.get('q') else '' %}
-        
-        <!-- Previous page -->
-        {% if page > 1 %}
-          <li class="page-item">
-            <a class="page-link" href="/?page={{ page - 1 }}{{ search_param }}">Previous</a>
-          </li>
-        {% endif %}
-        
-        <!-- Page numbers -->
-        {% for p in range(1, total_pages + 1) %}
-          {% if p == page %}
-            <li class="page-item active">
-              <span class="page-link">{{ p }}</span>
-            </li>
-          {% else %}
-            <li class="page-item">
-              <a class="page-link" href="/?page={{ p }}{{ search_param }}">{{ p }}</a>
-            </li>
-          {% endif %}
-        {% endfor %}
-        
-        <!-- Next page -->
-        {% if page < total_pages %}
-          <li class="page-item">
-            <a class="page-link" href="/?page={{ page + 1 }}{{ search_param }}">Next</a>
-          </li>
-        {% endif %}
-      </ul>
-    </nav>
-  {% endif %}
-
-  <!-- Results summary -->
-  {% if request.args.get('q') %}
-    <div class="text-center mt-3">
-      <small class="text-muted">
-        Showing page {{ page }} of {{ total_pages }} 
-        {% if total_pages > 1 %}({{ ((page-1) * 40 + 1) }}-{{ (page * 40) if page < total_pages else 'end' }} of filtered results){% endif %}
-      </small>
-    </div>
-  {% endif %}
+  <nav aria-label="Page navigation" class="mt-5">
+    <ul class="pagination justify-content-center">
+      {% for p in range(1, total_pages + 1) %}
+        <li class="page-item {% if p == page %}active{% endif %}">
+          <a class="page-link" href="{{ url_for('index', q=request.args.get('q', ''), page=p) }}">{{ p }}</a>
+        </li>
+      {% endfor %}
+    </ul>
+  </nav>
 
 <!-- Debugging Tools -->
-<div class="debug-controls mt-5 p-3 bg-light rounded">
+<div class="debug-controls">
     <h4>Debug Tools</h4>
     
     <!-- Full diagnostics -->
-    <a href="/diagnostics" class="btn btn-info me-2">Run Diagnostics</a>
+    <a href="/diagnostics" class="btn btn-info">Run Diagnostics</a>
     
     <!-- Test mode refresh (only 5 files) -->
-    <form method="POST" action="/refresh/thumbnails" style="display: inline;" class="me-2">
+    <form method="POST" action="/refresh/thumbnails" style="display: inline;">
         <input type="hidden" name="test_mode" value="true">
         <button type="submit" class="btn btn-primary">Test Refresh (5 files)</button>
     </form>
     
     <!-- Test single file -->
-    <form method="POST" action="/test/single/1K3Na36ffxR4L1Fv6fXESfGzn8iih2kgh" style="display: inline;" class="me-2">
+    <form method="POST" action="/test/single/1K3Na36ffxR4L1Fv6fXESfGzn8iih2kgh" style="display: inline;">
         <button type="submit" class="btn btn-secondary">Test Single File</button>
     </form>
 
-    <!-- Thumbnail Refresh -->
-    <form method="POST" action="/refresh/thumbnails" style="display: inline;" class="me-2">
+      <!-- Thumbnail Refresh -->
+    <form method="POST" action="/refresh/thumbnails" style="display: inline;">
         <button type="submit" class="btn btn-warning" onclick="return confirm('This will refresh ALL thumbnails. Continue?')">
             Refresh All Thumbnails
         </button>
