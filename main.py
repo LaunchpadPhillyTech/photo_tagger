@@ -33,7 +33,7 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 ### - Configuration Constants - ###
 # User Access Control
 ALLOWED_USERS = {
-    "alope0091@launchpadphilly.org",
+    "aloped0091@launchpadphilly.org",
     "placeholder@launchpadphilly.org",
     "melanie@b-21.org", 
     "rob@launchpadphilly.org", 
