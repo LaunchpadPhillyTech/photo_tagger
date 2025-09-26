@@ -36,7 +36,8 @@ ALLOWED_USERS = {
     "alope0091@launchpadphilly.org",
     "placeholder@launchpadphilly.org",
     "melanie@b-21.org", 
-    "rob@launchpadphilly.org"
+    "rob@launchpadphilly.org", 
+    "christian@launchpadphilly.org"
 }
 
 # Database Configuration
